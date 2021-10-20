@@ -1,22 +1,23 @@
 from __future__ import absolute_import
 from __future__ import division
 from __future__ import print_function
-import math
-import os
-import pickle
-from sklearn.svm import SVC
-from faces_augmentation import *
-import numpy as np
-import tensorflow as tf
-import facenet
+
 import base64
 import glob
 import io
+import os
+import pickle
 import time
 
 import imutils
+import tensorflow as tf
 import torch
-from PIL import Image,ImageFile
+from PIL import Image, ImageFile
+from sklearn.svm import SVC
+
+import facenet
+from faces_augmentation import *
+
 ImageFile.LOAD_TRUNCATED_IMAGES = True
 from facenet_pytorch import MTCNN
 from flask import Flask, Response, request, jsonify
@@ -24,17 +25,17 @@ from flask import render_template
 from imutils.video import VideoStream
 
 import align.detect_face
-#from classifier import *
+# from classifier import *
 from gamma_correction import *
 
-device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
-
-mtcnn = MTCNN(
-    margin=44,
-    factor=0.8,
-    keep_all=False,
-    device=device
-)
+# device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
+#
+# mtcnn = MTCNN(
+#     margin=44,
+#     factor=0.8,
+#     keep_all=False,
+#     device=device
+# )
 
 
 def adjust_gamma(image, gamma=1.0):
@@ -75,7 +76,6 @@ app = Flask(__name__)
 def train(id_company):
     image_size = 160
 
-
     np.random.seed(seed=666)
 
     dataset = facenet.get_dataset(f'../static/{id_company}')
@@ -91,7 +91,7 @@ def train(id_company):
 
     # Load the model
     print('Loading feature extraction model')
-    #facenet.load_model('../Models/20180402-114759.pb')
+    # facenet.load_model('../Models/20180402-114759.pb')
 
     # Get input and output tensors
     # images_placeholder = tf.get_default_graph().get_tensor_by_name("input:0")
@@ -103,6 +103,7 @@ def train(id_company):
     print('Calculating features for images')
     nrof_images = len(paths)
     nrof_batches_per_epoch = int(math.ceil(1.0 * nrof_images / 1000))
+    print(nrof_batches_per_epoch)
     emb_array = np.zeros((nrof_images, embedding_size))
     for i in range(nrof_batches_per_epoch):
         start_index = i * 1000
@@ -113,14 +114,15 @@ def train(id_company):
         emb_array[start_index:end_index, :] = sess.run(embeddings, feed_dict=feed_dict)
 
     classifier_filename_exp = os.path.expanduser(f'../Models/{id_company}.pkl')
-
+    param_grid = {'C': [0.1, 1, 10, 100], 'gamma': [100, 10, 1, 0.1, 0.01, 0.001], 'kernel': ['linear']}
     if True:
         # Train classifier
         print('Training classifier')
-        model = SVC(kernel='linear', C=5, gamma=10, probability=True)
+        model = SVC(kernel='linear', C=0.1, gamma=100, probability=True)
         model.fit(emb_array, labels)
-
-        # Create a list of class names
+        # grid = GridSearchCV(SVC(), param_grid, refit=True, verbose=2)
+        # grid.fit(emb_array, labels)
+        # print(grid.best_estimator_)
         class_names = [cls.name.replace('_', ' ') for cls in dataset]
 
         # Saving classifier model
@@ -135,11 +137,20 @@ def base64ToImage(base64_string):
     img = cv2.cvtColor(np.array(Image.open(io.BytesIO(imgdata))), cv2.COLOR_BGR2RGB)
     return img
 
+
 def readb64(base64_string):
     sbuf = io.StringIO()
     sbuf.write(base64.b64decode(base64_string))
     pimg = Image.open(sbuf)
     return cv2.cvtColor(np.array(pimg), cv2.COLOR_RGB2BGR)
+
+
+def base64ToImageWeb(base64_string):
+    base64_string = base64_string.split(',')[-1]
+    imgdata = base64.b64decode(base64_string)
+    img = cv2.cvtColor(np.array(Image.open(io.BytesIO(imgdata))), cv2.COLOR_BGR2RGB)
+    return img
+
 
 def imageToBase64(image):
     retval, buffer = cv2.imencode('.png', image)
@@ -179,8 +190,8 @@ def retrain():
 
 companies = os.listdir('../static')
 for company in companies:
-    #model[company], class_names[company] =train(company)
-    load_trained_model(company)
+    model[company], class_names[company] = train(company)
+    #load_trained_model(company)
 
 
 def gen_frames():
@@ -191,13 +202,13 @@ def gen_frames():
     print(company_id_stream)
     name = "Unknown"
     cap = VideoStream(src=0).start()
-    #facenet.load_model(FACENET_MODEL_PATH)
+    # facenet.load_model(FACENET_MODEL_PATH)
 
     while (True):
         frame = cap.read()
         frame = imutils.resize(frame, width=600)
         frame = cv2.flip(frame, 1)
-        #frame = gamma_correction2(frame)
+        # frame = gamma_correction2(frame)
 
         bounding_boxes, _ = align.detect_face.detect_face(frame, MINSIZE, pnet, rnet, onet, THRESHOLD, FACTOR)
 
@@ -267,7 +278,7 @@ def streamimg():
     global user_id_stream
     company_id_stream = request.args.get('company_id')
     # print(company_id_stream)
-    #user_id_stream = request.args.get('user_id')
+    # user_id_stream = request.args.get('user_id')
     return render_template('index.html')
 
 
@@ -302,9 +313,8 @@ def register():
         files = glob.glob(path + '/*')
         for f in files:
             os.remove(f)
-    print("reg_path",path)
+    print("reg_path", path)
     scale = 0.25
-    ptime = 0
     count = 0
     frame_count = 0
     while frame_count < 10:
@@ -312,50 +322,50 @@ def register():
         frame = imutils.resize(frame, width=600)
 
         frame = cv2.flip(frame, 1)
-        if True:
-            img = frame.copy()
-            base_img = frame.copy()
-            img = cv2.resize(img, (int(img.shape[1] * scale), int(img.shape[0] * scale)),
-                             interpolation=cv2.INTER_AREA)
-            boxes, conf = mtcnn.detect(img)
+        bounding_boxes, _ = align.detect_face.detect_face(frame, MINSIZE, pnet, rnet, onet, THRESHOLD, FACTOR)
 
-            if conf[0] != None:
-                for (x, y, w, h) in boxes:
-                    if (w - x) > 100 * scale:
-                        text = f"{conf[0] * 100:.2f}%"
-                        x, y, w, h = int(x / scale), int(y / scale), int(w / scale), int(h / scale)
-                        custom_face = base_img[y:h, x:w]
-                        custom_face = cv2.resize(custom_face, (INPUT_IMAGE_SIZE, INPUT_IMAGE_SIZE),
-                                                 interpolation=cv2.INTER_CUBIC)
-                        if count % 5 == 0:
-                            # frame = gamma_correction2(frame)
-                            cv2.imwrite(path + '/%d.png' % (count), custom_face)
-                            process_frame1 = adjust_gamma(custom_face, 0.9)
-                            cv2.imwrite(path + '/%d_adjusted1.png' % (count), process_frame1)
-                            process_frame2 = rotate_img(custom_face,angle=5)
-                            cv2.imwrite(path + '/%d_adjusted2.png' % (count), process_frame2)
-                            process_frame3 = adjust_gamma(custom_face,1.2)
-                            cv2.imwrite(path + '/%d_adjusted3.png' % (count), process_frame3)
-                            process_frame4 = distort(custom_face)
-                            cv2.imwrite(path + '/%d_adjusted4.png' % (count), process_frame4)
-                            process_frame5 = cv2.flip(custom_face,1)
-                            cv2.imwrite(path + '/%d_adjusted5.png' % (count), process_frame5)
+        faces_found = bounding_boxes.shape[0]
 
-                            print("frame %d saved" % count)
-                            frame_count = frame_count + 1
-                        cv2.putText(frame, text, (x, y - 20),
-                                    cv2.FONT_HERSHEY_SIMPLEX, 1, (170, 170, 170), 1)
-                        cv2.rectangle(frame, (x, y), (w, h), (255, 255, 255), 1)
 
-        ctime = time.time()
-        # fps = 1 / (ctime - ptime)
-        ptime = ctime
-        # cv2.putText(frame, f'FPS: {str(int(fps))}', (100, 40), cv2.FONT_HERSHEY_SIMPLEX
-        #             , 1, (255, 67, 67), 1)
+        if faces_found > 1:
+            cv2.putText(frame, "Only one face", (0, 100), cv2.FONT_HERSHEY_COMPLEX_SMALL,
+                        1, (255, 255, 255), thickness=1, lineType=2)
+        elif faces_found > 0:
+            det = bounding_boxes[:, 0:4]
+            bb = np.zeros((faces_found, 4), dtype=np.int32)
+            for i in range(faces_found):
+                bb[i][0] = det[i][0]
+                bb[i][1] = det[i][1]
+                bb[i][2] = det[i][2]
+                bb[i][3] = det[i][3]
+                # print(bb[i][3] - bb[i][1])
+                # print(frame.shape[0])
+                # print((bb[i][3] - bb[i][1]) / frame.shape[0])
+                if (bb[i][3] - bb[i][1]) / frame.shape[0] > 0.25:
+                    cropped = frame[bb[i][1]:bb[i][3], bb[i][0]:bb[i][2], :]
+                    custom_face = cv2.resize(cropped, (INPUT_IMAGE_SIZE, INPUT_IMAGE_SIZE),
+                                        interpolation=cv2.INTER_CUBIC)
+                    cv2.rectangle(frame, (bb[i][0], bb[i][1]), (bb[i][2], bb[i][3]), (0, 255, 0), 2)
+                    if count % 5 == 0:
+                        # frame = gamma_correction2(frame)
+                        cv2.imwrite(path + '/%d.png' % (count), custom_face)
+                        process_frame1 = adjust_gamma(custom_face, 0.9)
+                        cv2.imwrite(path + '/%d_adjusted1.png' % (count), process_frame1)
+                        process_frame2 = rotate_img(custom_face, angle=5)
+                        cv2.imwrite(path + '/%d_adjusted2.png' % (count), process_frame2)
+                        process_frame3 = adjust_gamma(custom_face, 1.2)
+                        cv2.imwrite(path + '/%d_adjusted3.png' % (count), process_frame3)
+                        process_frame4 = distort(custom_face)
+                        cv2.imwrite(path + '/%d_adjusted4.png' % (count), process_frame4)
+                        process_frame5 = cv2.flip(custom_face, 1)
+                        cv2.imwrite(path + '/%d_adjusted5.png' % (count), process_frame5)
+                        print("frame %d saved" % count)
+                        frame_count = frame_count + 1
+        count = count + 1
         cv2.rectangle(frame, (10, 10), (90, 50), (255, 67, 67), -10)
         cv2.putText(frame, str(frame_count), (40, 40), cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 255, 255),
                     1)
-        count = count + 1
+
         try:
             ret, buffer = cv2.imencode('.jpg', frame)
             frame = buffer.tobytes()
@@ -391,7 +401,7 @@ def verify_web():
     global class_names
     name = ''
     user_id_verify_web = '.'
-    company_id_verify_web ='.'
+    company_id_verify_web = '.'
     best_class_probabilities = 0
     if True:
 
@@ -405,8 +415,8 @@ def verify_web():
             company_id_verify_web = content['company_id']
             user_id_verify_web = content['user_id']
             image = content['image']
-        frame =base64ToImage(image)
-        #print(frame)
+        frame = base64ToImageWeb(image)
+        # print(frame)
         # frame = gamma_correction2(frame)
         # Convert RGB to BGR
         # print(frame.shape)
@@ -462,7 +472,8 @@ def verify_web():
 
         except:
             pass
-    sc = jsonify({'company_id':company_id_verify_web,'user_id': user_id_verify_web, 'message': True if name == user_id_verify_web else False,"conf":best_class_probabilities[0]})
+    sc = jsonify({'company_id': company_id_verify_web, 'user_id': user_id_verify_web,
+                  'message': True if name == user_id_verify_web else False, "conf": best_class_probabilities[0]})
     sc.status_code = 200
     return sc
 
@@ -495,40 +506,57 @@ def register_web():
             os.remove(f)
 
     contents = request.json
-    scale = 0.25
+    scale = 0.5
     count = 0
-    frame_count = 0
+    reg_frame = 0
+    total = len(contents)
     for content in contents:
-
         image = content['image']
-        frame = base64ToImage(image)
-        frame = Image.open(frame).convert('RGB')
-        frame = np.array(frame)
+        frame = base64ToImageWeb(image)
         img = frame.copy()
-        base_img = frame.copy()
-        img = cv2.resize(img, (int(img.shape[1] * scale), int(img.shape[0] * scale)),
-                         interpolation=cv2.INTER_AREA)
-        boxes, conf = mtcnn.detect(img)
+        # base_img = frame.copy()
+        # img = cv2.resize(img, (int(img.shape[1] * scale), int(img.shape[0] * scale)),
+        #                  interpolation=cv2.INTER_AREA)
+        bounding_boxes, _ = align.detect_face.detect_face(img, MINSIZE, pnet, rnet, onet, THRESHOLD, FACTOR)
 
-        if conf[0] != None:
-            for (x, y, w, h) in boxes:
-                if (w - x) > 100 * scale:
-                    text = f"{conf[0] * 100:.2f}%"
-                    x, y, w, h = int(x / scale), int(y / scale), int(w / scale), int(h / scale)
-                    custom_face = base_img[y:h, x:w]
-                    custom_face = cv2.resize(custom_face, (INPUT_IMAGE_SIZE, INPUT_IMAGE_SIZE),
+        faces_found = bounding_boxes.shape[0]
+
+        if faces_found > 1:
+            cv2.putText(frame, "Only one face", (0, 100), cv2.FONT_HERSHEY_COMPLEX_SMALL,
+                        1, (255, 255, 255), thickness=1, lineType=2)
+        elif faces_found > 0:
+            det = bounding_boxes[:, 0:4]
+            bb = np.zeros((faces_found, 4), dtype=np.int32)
+            for i in range(faces_found):
+                bb[i][0] = det[i][0]
+                bb[i][1] = det[i][1]
+                bb[i][2] = det[i][2]
+                bb[i][3] = det[i][3]
+                # print(bb[i][3] - bb[i][1])
+                # print(frame.shape[0])
+                # print((bb[i][3] - bb[i][1]) / frame.shape[0])
+                if (bb[i][3] - bb[i][1]) / frame.shape[0] > 0.25:
+                    cropped = frame[bb[i][1]:bb[i][3], bb[i][0]:bb[i][2], :]
+                    #cv2.rectangle(frame, (bb[i][0], bb[i][1]), (bb[i][2], bb[i][3]), (0, 255, 0), 2)
+                    custom_face = cv2.resize(cropped, (INPUT_IMAGE_SIZE, INPUT_IMAGE_SIZE),
                                              interpolation=cv2.INTER_CUBIC)
-                    if True:
-                        # frame = gamma_correction2(frame)
-                        cv2.imwrite(path + '/%d.png' % (count), custom_face)
-                        process_frame1 = adjust_gamma(custom_face, 0.9)
-                        cv2.imwrite(path + '/%d_adjusted1.png' % (count), process_frame1)
-                        print("frame %d saved" % count)
-                        frame_count = frame_count + 1
-                    cv2.putText(frame, text, (x, y - 20),
-                                cv2.FONT_HERSHEY_SIMPLEX, 1, (170, 170, 170), 1)
-                    cv2.rectangle(frame, (x, y), (w, h), (255, 255, 255), 1)
+                    print(custom_face)
+                    cv2.imwrite(path + '/%d.png' % (count), custom_face)
+                    process_frame1 = adjust_gamma(custom_face, 0.9)
+                    cv2.imwrite(path + '/%d_adjusted1.png' % (count), process_frame1)
+                    print("frame %d saved" % count)
+                    reg_frame = reg_frame+1
+        count = count + 1
+
     model[company_id_reg_web], class_names[company_id_reg_web] = train(company_id_reg_web)
+    sc = jsonify({'company_id': company_id_reg_web, 'user_id': user_id_reg_web,
+                  'message': f"Up load register image completed! {reg_frame}/{total} images uploaded!"})
+    sc.status_code = 200
+    # except:
+    #     sc = jsonify({'company_id': company_id_reg_web, 'user_id': user_id_reg_web,
+    #                   'message': f"Up load register image unsuccessfull! {count}/{total} images uploaded!"})
+    #     sc.status_code = 404
+    return sc
 
 
 if __name__ == '__main__':

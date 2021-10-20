@@ -23,7 +23,7 @@ def imageToBase64(image):
     image_data = jpg_as_text.decode("utf-8")
     image_data = str(image_data)
     return image_data
-img  = cv2.imread(r'C:\Users\doank\PycharmProjects\Face-Verification-2\raw\1.png')
+img  = cv2.imread(r'C:\Users\doank\PycharmProjects\Face-Verification-2\raw\1634481360985.png')
 
 def base64ToImage(base64_string):
     imgdata = base64.b64decode(base64_string)
