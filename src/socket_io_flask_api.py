@@ -16,7 +16,6 @@ import os
 
 import align.detect_face
 import facenet
-#from Face_recogition_vjpro import *
 from gamma_correction import *
 from faces_augmentation import *
 app = Flask(__name__)
@@ -26,17 +25,8 @@ app.config['DEBUG'] = False
 
 socketio = SocketIO(app)
 print('loading')
-# use 0 for web camera
 frame = 0
-#device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
-from facenet_pytorch import MTCNN
 
-# mtcnn = MTCNN(
-#     margin=48,
-#     factor=0.8,
-#     keep_all=False,
-#     device=device
-# )
 ALLOWED_EXTENSIONS = set(['jpg'])
 MINSIZE = 20
 THRESHOLD = [0.6, 0.7, 0.7]
@@ -46,24 +36,25 @@ INPUT_IMAGE_SIZE = 160
 # CLASSIFIER_PATH = '../Models/facemodel.pkl'
 FACENET_MODEL_PATH = '../Models/20180402-114759.pb'
 
-tf.Graph().as_default()
+tf.compat.v1.Graph().as_default()
 
-gpu_options = tf.GPUOptions(per_process_gpu_memory_fraction=0.6)
-sess = tf.Session(config=tf.ConfigProto(gpu_options=gpu_options, log_device_placement=False))
+gpu_options = tf.compat.v1.GPUOptions(per_process_gpu_memory_fraction=0.6)
+sess = tf.compat.v1.Session(config=tf.compat.v1.ConfigProto(gpu_options=gpu_options, log_device_placement=False))
 
 # Load the model
 print('Loading feature extraction model')
 facenet.load_model(FACENET_MODEL_PATH)
 
 # Get input and output tensors
-images_placeholder = tf.get_default_graph().get_tensor_by_name("input:0")
-embeddings = tf.get_default_graph().get_tensor_by_name("embeddings:0")
-phase_train_placeholder = tf.get_default_graph().get_tensor_by_name("phase_train:0")
+images_placeholder = tf.compat.v1.get_default_graph().get_tensor_by_name("input:0")
+embeddings = tf.compat.v1.get_default_graph().get_tensor_by_name("embeddings:0")
+phase_train_placeholder = tf.compat.v1.get_default_graph().get_tensor_by_name("phase_train:0")
 embedding_size = embeddings.get_shape()[1]
 pnet, rnet, onet = align.detect_face.create_mtcnn(sess, "align")
 
 model = {}
 class_names = {}
+
 
 
 def train(id_company):
@@ -79,20 +70,7 @@ def train(id_company):
 
     paths, labels = facenet.get_image_paths_and_labels(dataset)
 
-    # print('Number of classes: %d' % len(dataset))
-    # print('Number of images: %d' % len(paths))
-    #
-    # # Load the model
-    # print('Loading feature extraction model')
-    # facenet.load_model('../Models/20180402-114759.pb')
 
-    # Get input and output tensors
-    # images_placeholder = tf.get_default_graph().get_tensor_by_name("input:0")
-    # embeddings = tf.get_default_graph().get_tensor_by_name("embeddings:0")
-    # phase_train_placeholder = tf.get_default_graph().get_tensor_by_name("phase_train:0")
-    # embedding_size = embeddings.get_shape()[1]
-
-    # Run forward pass to calculate embeddings
     print('Calculating features for images')
     nrof_images = len(paths)
     nrof_batches_per_epoch = int(math.ceil(1.0 * nrof_images / 1000))

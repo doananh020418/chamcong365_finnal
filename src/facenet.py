@@ -222,6 +222,17 @@ def load_data(image_paths, do_random_crop, do_random_flip, image_size, do_prewhi
         images[i, :, :, :] = img
     return images
 
+def load_data1(image_paths, do_random_crop, do_random_flip, image_size, do_prewhiten=True):
+    images = np.zeros((1, image_size, image_size, 3))
+    img = misc.imread(image_paths)
+    if img.ndim == 2:
+        img = to_rgb(img)
+    if do_prewhiten:
+        img = prewhiten(img)
+    img = crop(img, do_random_crop, image_size)
+    img = flip(img, do_random_flip)
+    images[0, :, :, :] = img
+    return images
 
 def get_label_batch(label_data, batch_size, batch_index):
     nrof_examples = np.size(label_data, 0)

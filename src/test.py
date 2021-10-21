@@ -1,9 +1,8 @@
-import base64
 import io
 
-import cv2
 import numpy as np
-from PIL import Image,ImageFile
+from PIL import Image, ImageFile
+
 ImageFile.LOAD_TRUNCATED_IMAGES = True
 
 # def base64ToImage(base64_string):
@@ -17,23 +16,29 @@ ImageFile.LOAD_TRUNCATED_IMAGES = True
 # cv2.waitKey(0)
 import base64
 import cv2
+import requests
+
+
 def imageToBase64(image):
     retval, buffer = cv2.imencode('.jpg', image)
     jpg_as_text = base64.b64encode(buffer)
     image_data = jpg_as_text.decode("utf-8")
     image_data = str(image_data)
     return image_data
-img  = cv2.imread(r'C:\Users\doank\PycharmProjects\Face-Verification-2\raw\1634481360985.png')
+import glob
 
-def base64ToImage(base64_string):
-    imgdata = base64.b64decode(base64_string)
-    img = cv2.cvtColor(np.array(Image.open(io.BytesIO(imgdata))), cv2.COLOR_BGR2RGB)
-    return img
+file = glob.glob('../raw/test/webcam/*')
+for f in file:
+    img  = cv2.imread(rf'{f}')
 
-base64img = imageToBase64(img)
-print(base64img)
-img_origin = base64ToImage(base64img)
-
-cv2.imshow("hjhj",img_origin)
-cv2.waitKey(0)
-
+    base64img = imageToBase64(img)
+    res = requests.post('http://192.168.1.4:5002/verify_web', json=
+    [
+        {
+            "company_id": "test",
+            "user_id": "Duc",
+            "image":f"data:image/png;base64,{base64img}"
+        }
+    ]
+    )
+    print(res.json())

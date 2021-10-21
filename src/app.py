@@ -8,34 +8,23 @@ import io
 import os
 import pickle
 import time
-
+import pandas as pd
 import imutils
 import tensorflow as tf
-import torch
 from PIL import Image, ImageFile
+from sklearn.model_selection import GridSearchCV
 from sklearn.svm import SVC
-
 import facenet
 from faces_augmentation import *
 
 ImageFile.LOAD_TRUNCATED_IMAGES = True
-from facenet_pytorch import MTCNN
 from flask import Flask, Response, request, jsonify
 from flask import render_template
 from imutils.video import VideoStream
 
 import align.detect_face
-# from classifier import *
 from gamma_correction import *
-
-# device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
-#
-# mtcnn = MTCNN(
-#     margin=44,
-#     factor=0.8,
-#     keep_all=False,
-#     device=device
-# )
+from sklearn.preprocessing import LabelEncoder
 
 
 def adjust_gamma(image, gamma=1.0):
@@ -72,8 +61,16 @@ pnet, rnet, onet = align.detect_face.create_mtcnn(sess, "align")
 
 app = Flask(__name__)
 
+employees_list = {}
+embedding_list = {}
 
-def train(id_company):
+df = pd.DataFrame()
+le = LabelEncoder()
+
+df = {}
+
+def train(id_company,id_user = None):
+    global df
     image_size = 160
 
     np.random.seed(seed=666)
@@ -85,51 +82,91 @@ def train(id_company):
         assert (len(cls.image_paths) > 0, 'There must be at least one image for each class in the dataset')
 
     paths, labels = facenet.get_image_paths_and_labels(dataset)
+    if id_user == None:
 
-    print('Number of classes: %d' % len(dataset))
-    print('Number of images: %d' % len(paths))
+        # print('Number of classes: %d' % len(dataset))
+        # print('Number of images:',(paths))
+        id = []
+        for p in paths:
+            id.append(p.split('\\')[-2])
 
-    # Load the model
-    print('Loading feature extraction model')
-    # facenet.load_model('../Models/20180402-114759.pb')
 
-    # Get input and output tensors
-    # images_placeholder = tf.get_default_graph().get_tensor_by_name("input:0")
-    # embeddings = tf.get_default_graph().get_tensor_by_name("embeddings:0")
-    # phase_train_placeholder = tf.get_default_graph().get_tensor_by_name("phase_train:0")
-    # embedding_size = embeddings.get_shape()[1]
+        emb_arrays = []
+        for path in paths:
+            #print(path)
+            emb_array=[]
+            images = facenet.load_data1(path, False, False, image_size)
+            feed_dict = {images_placeholder: images, phase_train_placeholder: False}
+            emb_array.append(sess.run(embeddings, feed_dict=feed_dict)[0])
+            emb_array.append(path.split('/')[-1].split('\\')[-2])
+            emb_arrays.append(emb_array)
+        df[id_company] = pd.DataFrame(emb_arrays,columns = ['emb_array','name'])
+        #df[id_company].to_csv('hjhj.csv')
 
-    # Run forward pass to calculate embeddings
-    print('Calculating features for images')
-    nrof_images = len(paths)
-    nrof_batches_per_epoch = int(math.ceil(1.0 * nrof_images / 1000))
-    print(nrof_batches_per_epoch)
-    emb_array = np.zeros((nrof_images, embedding_size))
-    for i in range(nrof_batches_per_epoch):
-        start_index = i * 1000
-        end_index = min((i + 1) * 1000, nrof_images)
-        paths_batch = paths[start_index:end_index]
-        images = facenet.load_data(paths_batch, False, False, image_size)
-        feed_dict = {images_placeholder: images, phase_train_placeholder: False}
-        emb_array[start_index:end_index, :] = sess.run(embeddings, feed_dict=feed_dict)
-
-    classifier_filename_exp = os.path.expanduser(f'../Models/{id_company}.pkl')
-    param_grid = {'C': [0.1, 1, 10, 100], 'gamma': [100, 10, 1, 0.1, 0.01, 0.001], 'kernel': ['linear']}
-    if True:
-        # Train classifier
+        classifier_filename_exp = os.path.expanduser(f'../Models/{id_company}.pkl')
+        param_grid = {'C': [0.1, 1, 10, 100], 'gamma': [2000,1000,500,300,100, 10, 1, 0.1, 0.01, 0.001], 'kernel': ['rbf', 'poly', 'sigmoid','linear']}
         print('Training classifier')
-        model = SVC(kernel='linear', C=0.1, gamma=100, probability=True)
-        model.fit(emb_array, labels)
-        # grid = GridSearchCV(SVC(), param_grid, refit=True, verbose=2)
-        # grid.fit(emb_array, labels)
-        # print(grid.best_estimator_)
+        model = SVC(kernel='linear', C=1, gamma=100, probability=True)
+        x_train = df[id_company].emb_array.apply(lambda x: list(map(float,x)))
+        y_train = df[id_company].name
+        y_train = le.fit_transform(y_train)
+
+        print(x_train)
+        model.fit(x_train.to_list(), y_train)
+        # model = GridSearchCV(SVC(), param_grid, refit=True, verbose=2)
+        # model.fit(emb_array, labels)
+        # print(model.best_estimator_)
+        class_names = [cls.name.replace('_', ' ') for cls in dataset]
+
+        # Saving classifier model
+        with open(classifier_filename_exp, 'wb') as outfile:
+            pickle.dump((model, class_names), outfile)
+        return model, class_names
+
+    if id_user != None:
+        new_path = []
+        new_label = []
+        for i,p in enumerate(paths):
+            if p.split('//')[-2] in employees_list[id_company]:
+                embedding_list[id_company] = np.delete(embedding_list[id_company],i)
+
+        print("new labels:" ,new_label)
+        print("new path", new_path)
+        # Load the model
+
+        nrof_images = len(new_path)
+        nrof_batches_per_epoch = int(math.ceil(1.0 * nrof_images / 1000))
+        print(nrof_batches_per_epoch)
+        emb_array = np.zeros((nrof_images, embedding_size))
+        for i in range(nrof_batches_per_epoch):
+            start_index = i * 1000
+            end_index = min((i + 1) * 1000, nrof_images)
+            paths_batch = new_path[start_index:end_index]
+            images = facenet.load_data(paths_batch, False, False, image_size)
+            feed_dict = {images_placeholder: images, phase_train_placeholder: False}
+            emb_array[start_index:end_index, :] = sess.run(embeddings, feed_dict=feed_dict)
+
+        classifier_filename_exp = os.path.expanduser(f'../Models/{id_company}.pkl')
+        param_grid = {'C': [0.1, 1, 10, 100], 'gamma': [2000, 1000, 500, 300, 100, 10, 1, 0.1, 0.01, 0.001],
+                      'kernel': ['rbf', 'poly', 'sigmoid', 'linear']}
+
+        embedding_list[id_company] = embedding_list[id_company] + emb_array
+
+        model = SVC(kernel='linear', C=1, gamma=100, probability=True)
+        model.fit(embedding_list[id_company], labels)
+        # model = GridSearchCV(SVC(), param_grid, refit=True, verbose=2)
+        # model.fit(emb_array, labels)
+        # print(model.best_estimator_)
         class_names = [cls.name.replace('_', ' ') for cls in dataset]
 
         # Saving classifier model
         with open(classifier_filename_exp, 'wb') as outfile:
             pickle.dump((model, class_names), outfile)
         print('Saved classifier model to file "%s"' % classifier_filename_exp)
+        employees_list[id_company] = employees_list[id_company] + new_label[0]
+        embedding_list[id_company] = embedding_list[id_company] + emb_array
         return model, class_names
+
 
 
 def base64ToImage(base64_string):
@@ -187,7 +224,7 @@ def retrain():
     sc.status_code = 200
     return sc
 
-
+#train('test')
 companies = os.listdir('../static')
 for company in companies:
     model[company], class_names[company] = train(company)
@@ -376,7 +413,7 @@ def register():
     yield (b'--frame\r\n'
            b'Content-Type: image/jpeg\r\n\r\n' + frame + b'\r\n')
     tic = time.time()
-    model[company_id_reg], class_names[company_id_reg] = train(company_id_reg)
+    model[company_id_reg], class_names[company_id_reg] = train(company_id_reg,user_id_reg)
     toc = time.time()
     print('function last {} secs'.format(int(toc - tic)))
 
@@ -402,7 +439,7 @@ def verify_web():
     name = ''
     user_id_verify_web = '.'
     company_id_verify_web = '.'
-    best_class_probabilities = 0
+    best_class_probabilities = []
     if True:
 
         # image = request.files['image']
@@ -469,12 +506,15 @@ def verify_web():
                             # person_detected[best_name] += 1
                         else:
                             name = "Unknown"
-
+            sc = jsonify({'company_id': company_id_verify_web, 'user_id': user_id_verify_web,
+                          'message': True if name == user_id_verify_web else False,
+                          "conf": best_class_probabilities[0]})
+            sc.status_code = 200
         except:
-            pass
-    sc = jsonify({'company_id': company_id_verify_web, 'user_id': user_id_verify_web,
-                  'message': True if name == user_id_verify_web else False, "conf": best_class_probabilities[0]})
-    sc.status_code = 200
+            sc = jsonify({'company_id': company_id_verify_web, 'user_id': user_id_verify_web,
+                          'message': True if name == user_id_verify_web else False })
+            sc.status_code = 404
+
     return sc
 
 
