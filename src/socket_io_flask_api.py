@@ -366,17 +366,11 @@ def reg_frame(frame, frame_count, count, path):
 def reg(input, user_id, company_id):  # add new employees
     global model
     global class_names
-    if user_id not in buff[company_id]:
-        buff[company_id].append(user_id)
-        reg_stt[company_id][user_id] = False
-        reg_frame_count[company_id][user_id] = 0
-        count[company_id][user_id] = 0
-    input = input.split(",")[1]
-    users[company_id][user_id] = request.sid
 
     foldername = str(company_id)
     path = os.path.join(os.path.abspath('../static'), foldername)
     if not os.path.exists(path):
+        buff[company_id] = []
         os.mkdir(path)
         base = os.path.join(os.path.abspath(f'../static/{foldername}'), 'base')
         os.mkdir(base)
@@ -392,6 +386,18 @@ def reg(input, user_id, company_id):  # add new employees
         files = glob.glob(path + '/*')
         for f in files:
             os.remove(f)
+
+    if user_id not in buff[company_id]:
+        users[company_id] = {}
+        reg_stt[company_id] = {}
+        reg_frame_count[company_id] = {}
+        count[company_id] = {}
+        buff[company_id].append(user_id)
+        reg_stt[company_id][user_id] = False
+        reg_frame_count[company_id][user_id] = 0
+        count[company_id][user_id] = 0
+    input = input.split(",")[1]
+    users[company_id][user_id] = request.sid
 
     frame = base64ToImage(input)
     reg_frame_count[company_id][user_id], count[company_id][user_id], frame = reg_frame(frame,
@@ -418,20 +424,14 @@ def verify_web():
     global class_names
     user_id_verify_web = '.'
     company_id_verify_web = '.'
+    best_class_probabilities = []
     if True:
 
-        # image = request.files['image']
-        # if 'image' not in request.files:
-        #     resp = jsonify({'message': 'No file part in the request'})
-        #     resp.status_code = 400
-        #     return resp
         contents = request.json
         for content in contents:
             company_id_verify_web = content['company_id']
             user_id_verify_web = content['user_id']
             image = content['image']
-        print(company_id_verify_web)
-        print(user_id_verify_web)
         frame = base64ToImageWeb(image)
         bounding_boxes, _ = align.detect_face.detect_face(frame, MINSIZE, pnet, rnet, onet, THRESHOLD, FACTOR)
         name = ''
@@ -467,7 +467,7 @@ def verify_web():
                         best_name = class_names[company_id_verify_web][best_class_indices[0]]
                         print("Name: {}, Probability: {}".format(best_name, best_class_probabilities))
 
-                        if best_class_probabilities > 0.6:
+                        if best_class_probabilities > 0.4:
                             cv2.rectangle(frame, (bb[i][0], bb[i][1]), (bb[i][2], bb[i][3]), (0, 255, 0), 2)
                             text_x = bb[i][0]
                             text_y = bb[i][1] - 20
@@ -500,6 +500,10 @@ def register_web():
     path = os.path.join(os.path.abspath('static'), foldername)
     if not os.path.exists(path):
         os.mkdir(path)
+        base = os.path.join(os.path.abspath(f'../static/{foldername}'), 'base')
+        os.mkdir(base)
+        img = cv2.imread("../black_image.jpg")
+        cv2.imwrite(f'{base}/black_image.jpg', img)
         path = os.path.join(os.path.abspath(f'static/{foldername}'), str(user_id))
         os.mkdir(path)
     elif not os.path.exists(os.path.join(os.path.abspath(f'static/{foldername}'), str(user_id))):
@@ -531,6 +535,7 @@ def register_web():
         if faces_found > 1:
             cv2.putText(frame, "Only one face", (0, 100), cv2.FONT_HERSHEY_COMPLEX_SMALL,
                         1, (255, 255, 255), thickness=1, lineType=2)
+
         elif faces_found > 0:
             det = bounding_boxes[:, 0:4]
             bb = np.zeros((faces_found, 4), dtype=np.int32)
