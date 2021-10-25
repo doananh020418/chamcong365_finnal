@@ -67,10 +67,15 @@ le = LabelEncoder()
 
 df = {}
 
+company_list = []
 
 def train(id_company, id_user=None):
     global df
     image_size = 160
+    if not id_company in company_list:
+        company_list.append(id_company)
+        employees_list[id_company] = []
+        df[id_company] = pd.DataFrame(columns=['emb_array', 'name'])
 
     np.random.seed(seed=666)
 
@@ -86,12 +91,11 @@ def train(id_company, id_user=None):
         # print('Number of classes: %d' % len(dataset))
         # print('Number of images:',(paths))
         id = []
-        for p in paths:
-            id.append(p.split('\\')[-2])
+
 
         emb_arrays = []
         for path in paths:
-            # print(path)
+            id.append(path.split('\\')[-2])
             emb_array = []
             images = facenet.load_data1(path, False, False, image_size)
             feed_dict = {images_placeholder: images, phase_train_placeholder: False}
@@ -123,20 +127,17 @@ def train(id_company, id_user=None):
         return model, class_names
 
     if id_user != None:
-        print(len(df[id_company]))
+        if len(df[id_company])==0:
+            path1 = glob.glob(f'../static/{id_company}/{id_user}/*')
+        else:
+            path1 = []
+        path2 = glob.glob(f'../static/{id_company}/base/*')
+        new_paths = path1+path2
         if id_user in df[id_company]['name']:
             df[id_company] = df[id_company][df[id_company]['name']!=id_user]
             print(len(df[id_company]))
         else:
             employees_list[id_company].append(id_user)
-
-        new_paths = glob.glob(f'../static/{id_company}/{id_user}/*')
-        new_label = []
-
-        #print("new labels:", new_label)
-        #print("new path", new_paths)
-        # Load the model
-
         emb_arrays = []
         for path in new_paths:
             #print(path)
@@ -360,7 +361,7 @@ def register():
         if faces_found > 1:
             cv2.putText(frame, "Only one face", (0, 100), cv2.FONT_HERSHEY_COMPLEX_SMALL,
                         1, (255, 255, 255), thickness=1, lineType=2)
-            continue
+
         elif faces_found > 0:
             det = bounding_boxes[:, 0:4]
             bb = np.zeros((faces_found, 4), dtype=np.int32)
@@ -435,21 +436,12 @@ def verify_web():
     best_class_probabilities = []
     if True:
 
-        # image = request.files['image']
-        # if 'image' not in request.files:
-        #     resp = jsonify({'message': 'No file part in the request'})
-        #     resp.status_code = 400
-        #     return resp
         contents = request.json
         for content in contents:
             company_id_verify_web = content['company_id']
             user_id_verify_web = content['user_id']
             image = content['image']
         frame = base64ToImageWeb(image)
-        # print(frame)
-        # frame = gamma_correction2(frame)
-        # Convert RGB to BGR
-        # print(frame.shape)
         bounding_boxes, _ = align.detect_face.detect_face(frame, MINSIZE, pnet, rnet, onet, THRESHOLD, FACTOR)
         name = ''
         faces_found = bounding_boxes.shape[0]
