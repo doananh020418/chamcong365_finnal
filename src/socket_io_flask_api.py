@@ -5,6 +5,7 @@ from __future__ import print_function
 import base64
 import glob
 import io
+import os
 import pickle
 
 import tensorflow as tf
@@ -12,12 +13,12 @@ from PIL import Image
 from flask import Flask, request, jsonify
 from flask_socketio import SocketIO
 from sklearn.svm import SVC
-import os
-
+import pandas as pd
 import align.detect_face
 import facenet
-from gamma_correction import *
 from faces_augmentation import *
+from gamma_correction import *
+
 app = Flask(__name__)
 
 app.config['SECRET_KEY'] = 'secret!'
@@ -27,7 +28,7 @@ socketio = SocketIO(app)
 print('loading')
 frame = 0
 
-ALLOWED_EXTENSIONS = set(['jpg'])
+ALLOWED_EXTENSIONS = {'jpg'}
 MINSIZE = 20
 THRESHOLD = [0.6, 0.7, 0.7]
 FACTOR = 0.709
@@ -55,9 +56,15 @@ pnet, rnet, onet = align.detect_face.create_mtcnn(sess, "align")
 model = {}
 class_names = {}
 
+employees_list = {}
+from sklearn.preprocessing import LabelEncoder
+le = LabelEncoder()
+
+df = {}
 
 
-def train(id_company):
+def train(id_company, id_user=None):
+    global df
     image_size = 160
 
     np.random.seed(seed=666)
@@ -69,36 +76,97 @@ def train(id_company):
         assert (len(cls.image_paths) > 0, 'There must be at least one image for each class in the dataset')
 
     paths, labels = facenet.get_image_paths_and_labels(dataset)
+    if id_user == None:
 
+        # print('Number of classes: %d' % len(dataset))
+        # print('Number of images:',(paths))
+        id = []
+        for p in paths:
+            id.append(p.split('\\')[-2])
 
-    print('Calculating features for images')
-    nrof_images = len(paths)
-    nrof_batches_per_epoch = int(math.ceil(1.0 * nrof_images / 1000))
-    emb_array = np.zeros((nrof_images, embedding_size))
-    for i in range(nrof_batches_per_epoch):
-        start_index = i * 1000
-        end_index = min((i + 1) * 1000, nrof_images)
-        paths_batch = paths[start_index:end_index]
-        images = facenet.load_data(paths_batch, False, False, image_size)
-        feed_dict = {images_placeholder: images, phase_train_placeholder: False}
-        emb_array[start_index:end_index, :] = sess.run(embeddings, feed_dict=feed_dict)
+        emb_arrays = []
+        for path in paths:
+            # print(path)
+            emb_array = []
+            images = facenet.load_data1(path, False, False, image_size)
+            feed_dict = {images_placeholder: images, phase_train_placeholder: False}
+            emb_array.append(sess.run(embeddings, feed_dict=feed_dict)[0])
+            emb_array.append(path.split('/')[-1].split('\\')[-2])
+            emb_arrays.append(emb_array)
+        df[id_company] = pd.DataFrame(emb_arrays, columns=['emb_array', 'name'])
+        # df[id_company].to_csv('hjhj.csv')
 
-    classifier_filename_exp = os.path.expanduser(f'../Models/{id_company}.pkl')
-
-    if True:
-        # Train classifier
+        classifier_filename_exp = os.path.expanduser(f'../Models/{id_company}.pkl')
+        param_grid = {'C': [0.1, 1, 10, 100], 'gamma': [2000, 1000, 500, 300, 100, 10, 1, 0.1, 0.01, 0.001],
+                      'kernel': ['rbf', 'poly', 'sigmoid', 'linear']}
         print('Training classifier')
-        model = SVC(kernel='linear', C=5, gamma=10, probability=True)
-        model.fit(emb_array, labels)
+        model = SVC(kernel='linear', C=1, gamma=100, probability=True)
+        x_train = df[id_company].emb_array.apply(lambda x: list(map(float, x)))
+        y_train = df[id_company].name
+        y_train = le.fit_transform(y_train)
+        #print(x_train)
+        model.fit(x_train.to_list(), y_train)
+        # model = GridSearchCV(SVC(), param_grid, refit=True, verbose=2)
+        # model.fit(emb_array, labels)
+        # print(model.best_estimator_)
+        class_names = [cls.name.replace('_', ' ') for cls in dataset]
+        employees_list[id_company] = class_names
 
-        # Create a list of class names
+        # Saving classifier model
+        with open(classifier_filename_exp, 'wb') as outfile:
+            pickle.dump((model, class_names), outfile)
+        return model, class_names
+
+    if id_user != None:
+        print(len(df[id_company]))
+        if id_user in df[id_company]['name']:
+            df[id_company] = df[id_company][df[id_company]['name']!=id_user]
+            print(len(df[id_company]))
+        else:
+            employees_list[id_company].append(id_user)
+
+        new_paths = glob.glob(f'../static/{id_company}/{id_user}/*')
+        new_label = []
+
+        #print("new labels:", new_label)
+        #print("new path", new_paths)
+        # Load the model
+
+        emb_arrays = []
+        for path in new_paths:
+            #print(path)
+            emb_array = []
+            images = facenet.load_data1(path, False, False, image_size)
+            feed_dict = {images_placeholder: images, phase_train_placeholder: False}
+            emb_array.append(sess.run(embeddings, feed_dict=feed_dict)[0])
+            emb_array.append(path.split('/')[-1].split('\\')[-2])
+            emb_arrays.append(emb_array)
+        tmp = pd.DataFrame(emb_arrays, columns=['emb_array', 'name'])
+        df[id_company] = pd.concat([df[id_company],tmp])
+
+        classifier_filename_exp = os.path.expanduser(f'../Models/{id_company}.pkl')
+        param_grid = {'C': [0.1, 1, 10, 100], 'gamma': [2000, 1000, 500, 300, 100, 10, 1, 0.1, 0.01, 0.001],
+                      'kernel': ['rbf', 'poly', 'sigmoid', 'linear']}
+
+        x_train = df[id_company].emb_array.apply(lambda x: list(map(float, x)))
+        y_train = df[id_company].name
+        y_train = le.fit_transform(y_train)
+        print(len(x_train))
+
+        model = SVC(kernel='linear', C=1, gamma=100, probability=True)
+        model.fit(x_train.to_list(), y_train)
+        # model = GridSearchCV(SVC(), param_grid, refit=True, verbose=2)
+        # model.fit(emb_array, labels)
+        # print(model.best_estimator_)
         class_names = [cls.name.replace('_', ' ') for cls in dataset]
 
         # Saving classifier model
         with open(classifier_filename_exp, 'wb') as outfile:
             pickle.dump((model, class_names), outfile)
-        # print('Saved classifier model to file "%s"' % classifier_filename_exp)
+        print('Saved classifier model to file "%s"' % classifier_filename_exp)
+
         return model, class_names
+
 
 def adjust_gamma(image, gamma=1.0):
     invGamma = 1.0 / gamma
@@ -106,6 +174,7 @@ def adjust_gamma(image, gamma=1.0):
                       for i in np.arange(0, 256)]).astype("uint8")
 
     return cv2.LUT(image, table)
+
 
 def load_trained_model(company_id):
     global model
@@ -246,7 +315,7 @@ reg_stt = {}
 reg_frame_count = {}
 
 
-def reg_frame(frame, frame_count, count, path, mtcnn):
+def reg_frame(frame, frame_count, count, path):
     scale = 0.25
     INPUT_IMAGE_SIZE = 160
     frame = cv2.flip(frame, 1)
@@ -260,8 +329,7 @@ def reg_frame(frame, frame_count, count, path, mtcnn):
 
     try:
         if faces_found > 1:
-            cv2.putText(frame, "Only one face", (0, 100), cv2.FONT_HERSHEY_COMPLEX_SMALL,
-                        1, (255, 255, 255), thickness=1, lineType=2)
+            pass
         elif faces_found > 0:
             det = bounding_boxes[:, 0:4]
             bb = np.zeros((faces_found, 4), dtype=np.int32)
@@ -293,10 +361,10 @@ def reg_frame(frame, frame_count, count, path, mtcnn):
 
     return frame_count, count, frame
 
+
 @socketio.on('face_register', namespace='/reg')
 def reg(input, user_id, company_id):  # add new employees
     global model
-    global mtcnn
     global class_names
     if user_id not in buff[company_id]:
         buff[company_id].append(user_id)
@@ -336,7 +404,7 @@ def reg(input, user_id, company_id):  # add new employees
     if reg_frame_count[company_id][user_id] == 10:
         count[company_id][user_id] = 0
         reg_frame_count[company_id][user_id] = 0
-        model[company_id], class_names[company_id] = train(company_id)
+        model[company_id], class_names[company_id] = train(company_id,user_id)
         # return status: True mean register completed
         # return processed frame which show the regions including face
         socketio.emit("registered", {'reg_stt': True, 'reg_data': frame}, to=users[company_id][user_id])
@@ -364,7 +432,7 @@ def verify_web():
             image = content['image']
         print(company_id_verify_web)
         print(user_id_verify_web)
-        frame = base64ToImage(image)
+        frame = base64ToImageWeb(image)
         bounding_boxes, _ = align.detect_face.detect_face(frame, MINSIZE, pnet, rnet, onet, THRESHOLD, FACTOR)
         name = ''
         faces_found = bounding_boxes.shape[0]
@@ -449,7 +517,7 @@ def register_web():
     total = len(contents)
     for content in contents:
         image = content['image']
-        frame = base64ToImage(image)
+        frame = base64ToImageWeb(image)
         frame = Image.open(frame).convert('RGB')
         frame = np.array(frame)
         img = frame.copy()
@@ -487,7 +555,7 @@ def register_web():
                     print("frame %d saved" % count)
         count = count + 1
 
-    model[company_id], class_names[company_id] = train(company_id)
+    model[company_id], class_names[company_id] = train(company_id,user_id)
     sc = jsonify({'company_id': company_id, 'user_id': user_id,
                   'message': f"Up load register image completed! {count}/{total} images uploaded!"})
     sc.status_code = 200
