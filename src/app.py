@@ -72,10 +72,10 @@ company_list = []
 def train(id_company, id_user=None):
     global df
     image_size = 160
-    if not id_company in company_list:
-        company_list.append(id_company)
-        employees_list[id_company] = []
-        df[id_company] = pd.DataFrame(columns=['emb_array', 'name'])
+    # if not id_company in company_list:
+    #     company_list.append(id_company)
+    #     employees_list[id_company] = []
+    #     df[id_company] = pd.DataFrame(columns=['emb_array', 'name'])
 
     np.random.seed(seed=666)
 
@@ -128,16 +128,16 @@ def train(id_company, id_user=None):
 
     if id_user != None:
         if len(df[id_company])==0:
-            path1 = glob.glob(f'../static/{id_company}/{id_user}/*')
+            path1 =glob.glob(f'../static/{id_company}/base/*')
         else:
             path1 = []
-        path2 = glob.glob(f'../static/{id_company}/base/*')
+        path2 = glob.glob(f'../static/{id_company}/{id_user}/*')
         new_paths = path1+path2
         if id_user in df[id_company]['name']:
             df[id_company] = df[id_company][df[id_company]['name']!=id_user]
             print(len(df[id_company]))
-        else:
-            employees_list[id_company].append(id_user)
+        # else:
+        #     employees_list[id_company].append(id_user)
         emb_arrays = []
         for path in new_paths:
             #print(path)
@@ -326,6 +326,13 @@ def register():
     global model
     global class_names
     cap = VideoStream(src=0).start()
+    if not company_id_reg in company_list:
+        df[company_id_reg] = pd.DataFrame(columns=['emb_array','name'])
+        company_list.append(company_id_reg)
+        employees_list[company_id_reg] = []
+    if user_id_reg not in employees_list[company_id_reg]:
+        employees_list[company_id_reg].append(user_id_reg)
+
 
     foldername = str(company_id_reg)
     path = os.path.join(os.path.abspath('../static'), foldername)
@@ -349,7 +356,7 @@ def register():
     print("reg_path", path)
     count = 0
     frame_count = 0
-    while frame_count < 5:
+    while frame_count < 10:
         frame = cap.read()
         frame = imutils.resize(frame, width=600)
 
