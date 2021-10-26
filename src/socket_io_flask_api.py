@@ -56,30 +56,34 @@ pnet, rnet, onet = align.detect_face.create_mtcnn(sess, "align")
 model = {}
 class_names = {}
 
-employees_list = {}
 from sklearn.preprocessing import LabelEncoder
 le = LabelEncoder()
 
 df = {}
+employees_list = {}
+company_list = []
 
 
 def train(id_company, id_user=None):
     global df
     image_size = 160
+    if not id_company in company_list:
+        company_list.append(id_company)
+        #employees_list[id_company] = []
+        df[id_company] = pd.DataFrame(columns=['emb_array', 'name'])
 
     np.random.seed(seed=666)
 
     dataset = facenet.get_dataset(f'../static/{id_company}')
 
     # Check that there are at least one training image per class
+
     for cls in dataset:
         assert (len(cls.image_paths) > 0, 'There must be at least one image for each class in the dataset')
 
     paths, labels = facenet.get_image_paths_and_labels(dataset)
     if id_user == None:
 
-        # print('Number of classes: %d' % len(dataset))
-        # print('Number of images:',(paths))
         id = []
         for p in paths:
             id.append(p.split('\\')[-2])
@@ -104,33 +108,29 @@ def train(id_company, id_user=None):
         x_train = df[id_company].emb_array.apply(lambda x: list(map(float, x)))
         y_train = df[id_company].name
         y_train = le.fit_transform(y_train)
-        #print(x_train)
         model.fit(x_train.to_list(), y_train)
-        # model = GridSearchCV(SVC(), param_grid, refit=True, verbose=2)
-        # model.fit(emb_array, labels)
-        # print(model.best_estimator_)
         class_names = [cls.name.replace('_', ' ') for cls in dataset]
         employees_list[id_company] = class_names
-
         # Saving classifier model
         with open(classifier_filename_exp, 'wb') as outfile:
             pickle.dump((model, class_names), outfile)
         return model, class_names
 
     if id_user != None:
-        print(len(df[id_company]))
+        #print(len(df[id_company]))
         if id_user in df[id_company]['name']:
             df[id_company] = df[id_company][df[id_company]['name']!=id_user]
             print(len(df[id_company]))
         else:
             employees_list[id_company].append(id_user)
+        if len(df[id_company]) == 0:
+            path1 = glob.glob(f'../static/{id_company}/base/*')
+        else:
+            path1 = []
+        path2 = glob.glob(f'../static/{id_company}/{id_user}/*')
+        new_paths = path1 + path2
 
-        new_paths = glob.glob(f'../static/{id_company}/{id_user}/*')
         new_label = []
-
-        #print("new labels:", new_label)
-        #print("new path", new_paths)
-        # Load the model
 
         emb_arrays = []
         for path in new_paths:
@@ -145,8 +145,8 @@ def train(id_company, id_user=None):
         df[id_company] = pd.concat([df[id_company],tmp])
 
         classifier_filename_exp = os.path.expanduser(f'../Models/{id_company}.pkl')
-        param_grid = {'C': [0.1, 1, 10, 100], 'gamma': [2000, 1000, 500, 300, 100, 10, 1, 0.1, 0.01, 0.001],
-                      'kernel': ['rbf', 'poly', 'sigmoid', 'linear']}
+        # param_grid = {'C': [0.1, 1, 10, 100], 'gamma': [2000, 1000, 500, 300, 100, 10, 1, 0.1, 0.01, 0.001],
+        #               'kernel': ['rbf', 'poly', 'sigmoid', 'linear']}
 
         x_train = df[id_company].emb_array.apply(lambda x: list(map(float, x)))
         y_train = df[id_company].name
@@ -155,9 +155,6 @@ def train(id_company, id_user=None):
 
         model = SVC(kernel='linear', C=1, gamma=100, probability=True)
         model.fit(x_train.to_list(), y_train)
-        # model = GridSearchCV(SVC(), param_grid, refit=True, verbose=2)
-        # model.fit(emb_array, labels)
-        # print(model.best_estimator_)
         class_names = [cls.name.replace('_', ' ') for cls in dataset]
 
         # Saving classifier model
@@ -316,6 +313,7 @@ reg_frame_count = {}
 
 
 def reg_frame(frame, frame_count, count, path):
+    face_detect = False
     scale = 0.25
     INPUT_IMAGE_SIZE = 160
     frame = cv2.flip(frame, 1)
@@ -347,19 +345,23 @@ def reg_frame(frame, frame_count, count, path):
                     custom_face = cv2.resize(cropped, (INPUT_IMAGE_SIZE, INPUT_IMAGE_SIZE),
                                              interpolation=cv2.INTER_CUBIC)
                     if count % 1 == 0:
-                        # frame = gamma_correction2(frame)
-                        cv2.imwrite(path + '/%d.png' % (count), custom_face)
-
                         process_frame1 = adjust_gamma(custom_face, 0.9)
                         cv2.imwrite(path + '/%d_adjusted1.png' % (count), process_frame1)
-                        print("frame %d saved" % count)
+                        cv2.imwrite(path + '/%d_adjusted2.png' % (count), custom_face)
+                        process_frame3 = adjust_gamma(custom_face, 1.2)
+                        cv2.imwrite(path + '/%d_adjusted3.png' % (count), process_frame3)
+                        process_frame4 = distort(custom_face)
+                        cv2.imwrite(path + '/%d_adjusted4.png' % (count), process_frame4)
+                        process_frame5 = cv2.flip(custom_face, 1)
+                        cv2.imwrite(path + '/%d_adjusted5.png' % (count), process_frame5)
                         frame_count = frame_count + 1
+                        face_detect = True
 
         count = count + 1
     except:
         pass
 
-    return frame_count, count, frame
+    return frame_count, count, face_detect
 
 
 @socketio.on('face_register', namespace='/reg')
@@ -370,7 +372,7 @@ def reg(input, user_id, company_id):  # add new employees
     foldername = str(company_id)
     path = os.path.join(os.path.abspath('../static'), foldername)
     if not os.path.exists(path):
-        buff[company_id] = []
+        employees_list[company_id] = []
         os.mkdir(path)
         base = os.path.join(os.path.abspath(f'../static/{foldername}'), 'base')
         os.mkdir(base)
@@ -387,12 +389,19 @@ def reg(input, user_id, company_id):  # add new employees
         for f in files:
             os.remove(f)
 
-    if user_id not in buff[company_id]:
+    if not company_id in company_list:
+        df[company_id] = pd.DataFrame(columns=['emb_array','name'])
+        company_list.append(company_id)
+        employees_list[company_id] = []
         users[company_id] = {}
         reg_stt[company_id] = {}
         reg_frame_count[company_id] = {}
         count[company_id] = {}
-        buff[company_id].append(user_id)
+
+
+    if user_id not in employees_list[company_id]:
+
+        employees_list[company_id].append(user_id)
         reg_stt[company_id][user_id] = False
         reg_frame_count[company_id][user_id] = 0
         count[company_id][user_id] = 0
@@ -400,22 +409,22 @@ def reg(input, user_id, company_id):  # add new employees
     users[company_id][user_id] = request.sid
 
     frame = base64ToImage(input)
-    reg_frame_count[company_id][user_id], count[company_id][user_id], frame = reg_frame(frame,
+    reg_frame_count[company_id][user_id], count[company_id][user_id], face_detect = reg_frame(frame,
                                                                                         reg_frame_count[company_id][
                                                                                             user_id],
                                                                                         count[company_id][user_id],
                                                                                         path
                                                                                         )
-    frame = imageToBase64(frame)
+    # frame = imageToBase64(frame)
     if reg_frame_count[company_id][user_id] == 10:
         count[company_id][user_id] = 0
         reg_frame_count[company_id][user_id] = 0
         model[company_id], class_names[company_id] = train(company_id,user_id)
         # return status: True mean register completed
         # return processed frame which show the regions including face
-        socketio.emit("registered", {'reg_stt': True, 'reg_data': frame}, to=users[company_id][user_id])
+        socketio.emit("registered", {'reg_stt': True, 'face_detect': face_detect}, to=users[company_id][user_id])
     else:
-        socketio.emit("registered", {'reg_stt': False, 'reg_data': frame}, to=users[company_id][user_id])
+        socketio.emit("registered", {'reg_stt': False, 'face_detect': face_detect}, to=users[company_id][user_id])
 
 
 @app.route('/verify_web', methods=['GET', 'POST'])
@@ -449,8 +458,7 @@ def verify_web():
                     bb[i][2] = det[i][2]
                     bb[i][3] = det[i][3]
                     print(bb[i][3] - bb[i][1])
-                    # print(frame.shape[0])
-                    # print((bb[i][3] - bb[i][1]) / frame.shape[0])
+
                     if (bb[i][3] - bb[i][1]) / frame.shape[0] > 0.25:
                         cropped = frame[bb[i][1]:bb[i][3], bb[i][0]:bb[i][2], :]
                         scaled = cv2.resize(cropped, (INPUT_IMAGE_SIZE, INPUT_IMAGE_SIZE),
@@ -496,6 +504,15 @@ def register_web():
     global class_names
     user_id = request.args.get('user_id')
     company_id = request.args.get('company_id')
+    if not company_id in company_list:
+        employees_list[company_id] = []
+        company_list.append(company_id)
+        df[company_id] = pd.DataFrame(columns=['emb_array','name'])
+
+    if user_id not in employees_list[company_id]:
+        employees_list[company_id].append(user_id)
+
+
     foldername = str(company_id)
     path = os.path.join(os.path.abspath('static'), foldername)
     if not os.path.exists(path):
@@ -522,8 +539,6 @@ def register_web():
     for content in contents:
         image = content['image']
         frame = base64ToImageWeb(image)
-        frame = Image.open(frame).convert('RGB')
-        frame = np.array(frame)
         img = frame.copy()
         # base_img = frame.copy()
         # img = cv2.resize(img, (int(img.shape[1] * scale), int(img.shape[0] * scale)),
@@ -544,9 +559,7 @@ def register_web():
                 bb[i][1] = det[i][1]
                 bb[i][2] = det[i][2]
                 bb[i][3] = det[i][3]
-                # print(bb[i][3] - bb[i][1])
-                # print(frame.shape[0])
-                # print((bb[i][3] - bb[i][1]) / frame.shape[0])
+
                 if (bb[i][3] - bb[i][1]) / frame.shape[0] > 0.25:
                     cropped = frame[bb[i][1]:bb[i][3], bb[i][0]:bb[i][2], :]
                     cv2.rectangle(frame, (bb[i][0], bb[i][1]), (bb[i][2], bb[i][3]), (0, 255, 0), 2)
