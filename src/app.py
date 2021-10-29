@@ -1,7 +1,7 @@
 from __future__ import absolute_import
 from __future__ import division
 from __future__ import print_function
-
+from tqdm import tqdm
 import base64
 import glob
 import io
@@ -13,15 +13,17 @@ import imutils
 import tensorflow as tf
 from PIL import Image, ImageFile
 from sklearn.model_selection import GridSearchCV
-from sklearn.svm import SVC
+from sklearn.svm import LinearSVC,SVC
+from sklearn.multiclass import OneVsRestClassifier
+from sklearn.ensemble import BaggingClassifier
 import facenet
 from faces_augmentation import *
-
+import shutil
 ImageFile.LOAD_TRUNCATED_IMAGES = True
 from flask import Flask, Response, request, jsonify
 from flask import render_template
 from imutils.video import VideoStream
-
+import distance as dst
 import align.detect_face
 from gamma_correction import *
 from sklearn.preprocessing import LabelEncoder
@@ -40,7 +42,6 @@ THRESHOLD = [0.6, 0.7, 0.7]
 FACTOR = 0.709
 IMAGE_SIZE = 182
 INPUT_IMAGE_SIZE = 160
-CLASSIFIER_PATH = '../Models/facemodel.pkl'
 FACENET_MODEL_PATH = '../Models/20180402-114759.pb'
 
 tf.Graph().as_default()
@@ -90,12 +91,14 @@ def train(id_company, id_user=None):
 
         # print('Number of classes: %d' % len(dataset))
         # print('Number of images:',(paths))
-        id = []
 
-
+        print("Get face emb vector \n")
+        tic = time.time()
         emb_arrays = []
-        for path in paths:
-            id.append(path.split('\\')[-2])
+        for path in tqdm(paths):
+            id=(path.split('\\')[-2])
+            if id not in employees_list[id_company]:
+                employees_list[id_company].append(id)
             emb_array = []
             images = facenet.load_data1(path, False, False, image_size)
             feed_dict = {images_placeholder: images, phase_train_placeholder: False}
@@ -103,20 +106,29 @@ def train(id_company, id_user=None):
             emb_array.append(path.split('/')[-1].split('\\')[-2])
             emb_arrays.append(emb_array)
         df[id_company] = pd.DataFrame(emb_arrays, columns=['emb_array', 'name'])
-        # df[id_company].to_csv('hjhj.csv')
-
+        df[id_company].to_pickle(f'df_{id_company}.pkl')
+        toc = time.time()
+        print(f"Face embbeding for {id_company} last {toc-tic} seconds")
         classifier_filename_exp = os.path.expanduser(f'../Models/{id_company}.pkl')
-        param_grid = {'C': [0.1, 1, 10, 100], 'gamma': [2000, 1000, 500, 300, 100, 10, 1, 0.1, 0.01, 0.001],
-                      'kernel': ['rbf', 'poly', 'sigmoid', 'linear']}
+        # param_grid = {'C': [0.1, 1, 10, 100, 1000], 'gamma': [5000, 2000, 1000, 500, 100],
+        #               'kernel': ['linear']}
         print('Training classifier')
-        model = SVC(kernel='linear', C=0.1, gamma=100, probability=True)
         x_train = df[id_company].emb_array.apply(lambda x: list(map(float, x)))
         y_train = df[id_company].name
         y_train = le.fit_transform(y_train)
         #print(x_train)
-        model.fit(x_train.to_list(), y_train)
+        n_estimators = 1
+
+        if len(x_train) < 100:
+            model = SVC(kernel='linear', probability=True)
+        else:
+            model = OneVsRestClassifier(BaggingClassifier(SVC(kernel='linear', C=0.1, gamma='scale', probability=True), max_samples=1.0 ,
+                                                          n_estimators=1))
+
+        # model = OneVsRestClassifier(SVC(kernel='linear',C=0.1,gamma = 100, probability=True,class_weight='balanced'), n_jobs=-1)
+
         # model = GridSearchCV(SVC(), param_grid, refit=True, verbose=2)
-        # model.fit(emb_array, labels)
+        model.fit(x_train.to_list(), y_train)
         # print(model.best_estimator_)
         class_names = [cls.name.replace('_', ' ') for cls in dataset]
         employees_list[id_company] = class_names
@@ -124,22 +136,29 @@ def train(id_company, id_user=None):
         # Saving classifier model
         with open(classifier_filename_exp, 'wb') as outfile:
             pickle.dump((model, class_names), outfile)
+
+        toe = time.time()
+        print(f"Training for {id_company} last {toe - toc} seconds")
         return model, class_names
 
     if id_user != None:
+        tic = time.time()
         if len(df[id_company])==0:
             path1 =glob.glob(f'../static/{id_company}/base/*')
         else:
             path1 = []
         path2 = glob.glob(f'../static/{id_company}/{id_user}/*')
         new_paths = path1+path2
-        if id_user in df[id_company]['name']:
-            df[id_company] = df[id_company][df[id_company]['name']!=id_user]
-            print(len(df[id_company]))
+        print("org_df",len(df[id_company]))
+        print(type(id_user))
+        if id_user in df[id_company]['name'].values:
+            df[id_company] = df[id_company][df[id_company]['name']!=str(id_user)]
+            print("edit_df", len(df[id_company]))
+
         # else:
         #     employees_list[id_company].append(id_user)
         emb_arrays = []
-        for path in new_paths:
+        for path in tqdm(new_paths):
             #print(path)
             emb_array = []
             images = facenet.load_data1(path, False, False, image_size)
@@ -149,6 +168,9 @@ def train(id_company, id_user=None):
             emb_arrays.append(emb_array)
         tmp = pd.DataFrame(emb_arrays, columns=['emb_array', 'name'])
         df[id_company] = pd.concat([df[id_company],tmp])
+        df[id_company].to_pickle(f'df_{id_company}.pkl')
+        toc = time.time()
+        print(f"Face embbeding for {id_company},user {id_user} last {toc-tic} seconds")
 
         classifier_filename_exp = os.path.expanduser(f'../Models/{id_company}.pkl')
         param_grid = {'C': [0.1, 1, 10, 100], 'gamma': [2000, 1000, 500, 300, 100, 10, 1, 0.1, 0.01, 0.001],
@@ -157,12 +179,16 @@ def train(id_company, id_user=None):
         x_train = df[id_company].emb_array.apply(lambda x: list(map(float, x)))
         y_train = df[id_company].name
         y_train = le.fit_transform(y_train)
-        print(len(x_train))
+        print('Total sample: ',len(x_train))
 
-        model = SVC(kernel='linear', C=0.1, gamma=100, probability=True)
+        n_estimators = 100
+        if len(x_train) < 100:
+            model = SVC(kernel='linear', C=0.1, gamma=100, probability=True)
+        else:
+            model = OneVsRestClassifier(BaggingClassifier(SVC(kernel='linear', C=0.1, gamma=100, probability=True), max_samples=1.0,
+                                                    n_estimators=n_estimators))
         model.fit(x_train.to_list(), y_train)
         # model = GridSearchCV(SVC(), param_grid, refit=True, verbose=2)
-        # model.fit(emb_array, labels)
         # print(model.best_estimator_)
         class_names = [cls.name.replace('_', ' ') for cls in dataset]
 
@@ -209,23 +235,32 @@ def index():
 
 model = {}
 class_names = {}
-
+threshold = dst.findThreshold('facenet', 'euclidean_l2')
 
 def load_trained_model(company_id):
     global model
     global class_names
+    global df
     # Load The Custom Classifier
+    CLASSIFIER_PATH = f'../Models/{company_id}.pkl'
     with open(CLASSIFIER_PATH, 'rb') as file:
         model[company_id], class_names[company_id] = pickle.load(file)
+    df_path = f'../src/df_{company_id}.pkl'
+    with open(df_path, 'rb') as file:
+        df[company_id] = pickle.load(file)
+
     print(f"Custom Classifier, Successfully loaded {company_id} company models")
 
-
-# train('test')
-companies = os.listdir('../static')
+#load_trained_model('HHP')
+# load_trained_model('HHP_org')
+#companies = os.listdir('../static')
+companies = ['HHP_x3']
 for company in companies:
-    model[company], class_names[company] = train(company)
-    # load_trained_model(company)
-
+    df[company] = pd.DataFrame(columns = ['emb_array','name'])
+    employees_list[company] = []
+    company_list.append(company)
+    #model[company], class_names[company] = train(company)
+    load_trained_model(company)
 
 def gen_frames():
     global company_id_stream
@@ -340,8 +375,8 @@ def register():
         os.mkdir(path)
         base = os.path.join(os.path.abspath(f'../static/{foldername}'), 'base')
         os.mkdir(base)
-        img = cv2.imread("../black_image.jpg")
-        cv2.imwrite(f'{base}/black_image.jpg', img)
+        # img = cv2.imread("../black_image.jpg")
+        # cv2.imwrite(f'{base}/black_image.jpg', img)
         path = os.path.join(os.path.abspath(f'../static/{foldername}'), str(user_id_reg))
         os.mkdir(path)
 
@@ -434,6 +469,81 @@ def stream():
     return render_template('index1.html')
 
 
+@app.route('/verify_web_2', methods=['GET', 'POST'])
+def verify_web2():
+    global model
+    global class_names
+    delta = 1
+    user_id_verify_web = '.'
+    company_id_verify_web = '.'
+    best_class_probabilities = []
+    name = 'unknown'
+    if True:
+        sc = jsonify({'company_id': company_id_verify_web, 'user_id': user_id_verify_web, 'pred': name,
+                      'message': True if name == user_id_verify_web else False})
+        contents = request.json
+        for content in contents:
+            company_id_verify_web = content['company_id']
+            user_id_verify_web = content['user_id']
+            image = content['image']
+        frame = base64ToImageWeb(image)
+        bounding_boxes, _ = align.detect_face.detect_face(frame, MINSIZE, pnet, rnet, onet, THRESHOLD, FACTOR)
+        name = 'Unknown'
+        faces_found = bounding_boxes.shape[0]
+        if faces_found > 1:
+            cv2.putText(frame, "Only one face", (0, 100), cv2.FONT_HERSHEY_COMPLEX_SMALL,
+                        1, (255, 255, 255), thickness=1, lineType=2)
+        elif faces_found > 0:
+            det = bounding_boxes[:, 0:4]
+            bb = np.zeros((faces_found, 4), dtype=np.int32)
+            for i in range(faces_found):
+                bb[i][0] = det[i][0]
+                bb[i][1] = det[i][1]
+                bb[i][2] = det[i][2]
+                bb[i][3] = det[i][3]
+                # print(bb[i][3] - bb[i][1])
+                # print(frame.shape[0])
+                # print((bb[i][3] - bb[i][1]) / frame.shape[0])
+                if (bb[i][3] - bb[i][1]) / frame.shape[0] > 0.25:
+                    cropped = frame[bb[i][1]:bb[i][3], bb[i][0]:bb[i][2], :]
+                    scaled = cv2.resize(cropped, (INPUT_IMAGE_SIZE, INPUT_IMAGE_SIZE),
+                                        interpolation=cv2.INTER_CUBIC)
+                    scaled = facenet.prewhiten(scaled)
+                    scaled_reshape = scaled.reshape(-1, INPUT_IMAGE_SIZE, INPUT_IMAGE_SIZE, 3)
+                    feed_dict = {images_placeholder: scaled_reshape, phase_train_placeholder: False}
+                    emb_array = sess.run(embeddings, feed_dict=feed_dict)
+                    def findDistance(row):
+                        distance_metric = 'euclidean_l2'
+                        img2_representation = row['emb_array']
+                        distance = 1000  # initialize very large value
+                        if distance_metric == 'cosine':
+                            distance = dst.findCosineDistance(emb_array, img2_representation)
+                        elif distance_metric == 'euclidean':
+                            distance = dst.findEuclideanDistance(emb_array, img2_representation)
+                        elif distance_metric == 'euclidean_l2':
+                            distance = dst.findEuclideanDistance(dst.l2_normalize(emb_array),
+                                                                 dst.l2_normalize(img2_representation))
+
+                        return distance
+                    tmp_df = df[company_id_verify_web][df[company_id_verify_web]['name']==user_id_verify_web]
+                    tmp_df['distance'] = tmp_df.apply(findDistance, axis=1)
+                    tmp_df = tmp_df.sort_values(by=["distance"])
+
+                    candidate = tmp_df.iloc[0]
+                    best_distance = candidate['distance']
+                    label = candidate['name']
+                    print('Best distance', best_distance)
+                    if best_distance <= threshold * delta:
+                        name = label
+                else:
+                    name = "Unknown"
+            sc = jsonify({'company_id': company_id_verify_web, 'user_id': user_id_verify_web,'pred':name,
+                          'message': True if name == user_id_verify_web else False})
+            sc.status_code = 200
+
+    return sc
+
+
 @app.route('/verify_web', methods=['GET', 'POST'])
 def verify_web():
     global model
@@ -442,7 +552,6 @@ def verify_web():
     company_id_verify_web = '.'
     best_class_probabilities = []
     if True:
-
         contents = request.json
         for content in contents:
             company_id_verify_web = content['company_id']
@@ -450,7 +559,7 @@ def verify_web():
             image = content['image']
         frame = base64ToImageWeb(image)
         bounding_boxes, _ = align.detect_face.detect_face(frame, MINSIZE, pnet, rnet, onet, THRESHOLD, FACTOR)
-        name = ''
+        name = 'Unknown'
         faces_found = bounding_boxes.shape[0]
         try:
             if faces_found > 1:
@@ -483,7 +592,7 @@ def verify_web():
                         best_name = class_names[company_id_verify_web][best_class_indices[0]]
                         print("Name: {}, Probability: {}".format(best_name, best_class_probabilities))
 
-                        if best_class_probabilities > 0.4:
+                        if best_class_probabilities > 0.1:
                             cv2.rectangle(frame, (bb[i][0], bb[i][1]), (bb[i][2], bb[i][3]), (0, 255, 0), 2)
                             text_x = bb[i][0]
                             text_y = bb[i][1] - 20
@@ -498,12 +607,12 @@ def verify_web():
                             # person_detected[best_name] += 1
                         else:
                             name = "Unknown"
-            sc = jsonify({'company_id': company_id_verify_web, 'user_id': user_id_verify_web,
+            sc = jsonify({'company_id': company_id_verify_web, 'user_id': user_id_verify_web,'pred':name,
                           'message': True if name == user_id_verify_web else False,
                           "conf": best_class_probabilities[0]})
             sc.status_code = 200
         except:
-            sc = jsonify({'company_id': company_id_verify_web, 'user_id': user_id_verify_web,
+            sc = jsonify({'company_id': company_id_verify_web, 'user_id': user_id_verify_web,'pred':name,
                           'message': True if name == user_id_verify_web else False})
             sc.status_code = 404
 
