@@ -27,7 +27,8 @@ import distance as dst
 import align.detect_face
 from gamma_correction import *
 from sklearn.preprocessing import LabelEncoder
-
+from sklearn.decomposition import PCA
+from sklearn.discriminant_analysis import LinearDiscriminantAnalysis
 
 def adjust_gamma(image, gamma=1.0):
     invGamma = 1.0 / gamma
@@ -38,7 +39,7 @@ def adjust_gamma(image, gamma=1.0):
 
 
 MINSIZE = 20
-THRESHOLD = [0.6, 0.7, 0.7]
+THRESHOLD = [0.7, 0.8, 0.8]
 FACTOR = 0.709
 IMAGE_SIZE = 182
 INPUT_IMAGE_SIZE = 160
@@ -69,16 +70,21 @@ le = LabelEncoder()
 df = {}
 
 company_list = []
+n_components = 50
+pca={}
+np.random.seed(seed=666)
 
 def train(id_company, id_user=None):
     global df
+    global pca
+    pca[id_company] = PCA(n_components=n_components, whiten=True)
     image_size = 160
     # if not id_company in company_list:
     #     company_list.append(id_company)
     #     employees_list[id_company] = []
     #     df[id_company] = pd.DataFrame(columns=['emb_array', 'name'])
 
-    np.random.seed(seed=666)
+
 
     dataset = facenet.get_dataset(f'../static/{id_company}')
 
@@ -106,29 +112,28 @@ def train(id_company, id_user=None):
             emb_array.append(path.split('/')[-1].split('\\')[-2])
             emb_arrays.append(emb_array)
         df[id_company] = pd.DataFrame(emb_arrays, columns=['emb_array', 'name'])
-        df[id_company].to_pickle(f'df_{id_company}.pkl')
+        df[id_company].to_pickle(f'../Models/df_{id_company}.pkl')
+        if len(df[id_company]) > 100:
+            df[id_company] = df[id_company][df[id_company]['name']!='base']
         toc = time.time()
         print(f"Face embbeding for {id_company} last {toc-tic} seconds")
         classifier_filename_exp = os.path.expanduser(f'../Models/{id_company}.pkl')
         # param_grid = {'C': [0.1, 1, 10, 100, 1000], 'gamma': [5000, 2000, 1000, 500, 100],
         #               'kernel': ['linear']}
         print('Training classifier')
-        x_train = df[id_company].emb_array.apply(lambda x: list(map(float, x)))
+        x_train = df[id_company].emb_array.apply(lambda x: list(map(float, x))).to_list()
+        pca[id_company].fit(x_train)
+        x_train = pca[id_company].transform(x_train)
         y_train = df[id_company].name
         y_train = le.fit_transform(y_train)
         #print(x_train)
         n_estimators = 1
 
-        if len(x_train) < 100:
-            model = SVC(kernel='linear', probability=True)
-        else:
-            model = OneVsRestClassifier(BaggingClassifier(SVC(kernel='linear', C=0.1, gamma='scale', probability=True), max_samples=1.0 ,
-                                                          n_estimators=1))
-
-        # model = OneVsRestClassifier(SVC(kernel='linear',C=0.1,gamma = 100, probability=True,class_weight='balanced'), n_jobs=-1)
+        model = SVC(kernel='linear',probability=False)
+        #model = OneVsRestClassifier(BaggingClassifier(SVC(kernel='linear', C=0.1, gamma=100, probability=False), max_samples=1.0,n_estimators=1))
 
         # model = GridSearchCV(SVC(), param_grid, refit=True, verbose=2)
-        model.fit(x_train.to_list(), y_train)
+        model.fit(x_train, y_train)
         # print(model.best_estimator_)
         class_names = [cls.name.replace('_', ' ') for cls in dataset]
         employees_list[id_company] = class_names
@@ -168,7 +173,7 @@ def train(id_company, id_user=None):
             emb_arrays.append(emb_array)
         tmp = pd.DataFrame(emb_arrays, columns=['emb_array', 'name'])
         df[id_company] = pd.concat([df[id_company],tmp])
-        df[id_company].to_pickle(f'df_{id_company}.pkl')
+        df[id_company].to_pickle(f'../Models/df_{id_company}.pkl')
         toc = time.time()
         print(f"Face embbeding for {id_company},user {id_user} last {toc-tic} seconds")
 
@@ -176,18 +181,15 @@ def train(id_company, id_user=None):
         param_grid = {'C': [0.1, 1, 10, 100], 'gamma': [2000, 1000, 500, 300, 100, 10, 1, 0.1, 0.01, 0.001],
                       'kernel': ['rbf', 'poly', 'sigmoid', 'linear']}
 
-        x_train = df[id_company].emb_array.apply(lambda x: list(map(float, x)))
+        x_train = df[id_company].emb_array.apply(lambda x: list(map(float, x))).to_list()
         y_train = df[id_company].name
         y_train = le.fit_transform(y_train)
         print('Total sample: ',len(x_train))
+        pca[id_company].fit(x_train)
+        x_train = pca[id_company].transform(x_train)
 
-        n_estimators = 100
-        if len(x_train) < 100:
-            model = SVC(kernel='linear', C=0.1, gamma=100, probability=True)
-        else:
-            model = OneVsRestClassifier(BaggingClassifier(SVC(kernel='linear', C=0.1, gamma=100, probability=True), max_samples=1.0,
-                                                    n_estimators=n_estimators))
-        model.fit(x_train.to_list(), y_train)
+        model = SVC(kernel='linear', C=0.1, gamma=100, probability=True)
+        model.fit(x_train, y_train)
         # model = GridSearchCV(SVC(), param_grid, refit=True, verbose=2)
         # print(model.best_estimator_)
         class_names = [cls.name.replace('_', ' ') for cls in dataset]
@@ -237,19 +239,20 @@ model = {}
 class_names = {}
 threshold = dst.findThreshold('facenet', 'euclidean_l2')
 
-def load_trained_model(company_id):
+def load_trained_model(id_company):
     global model
     global class_names
     global df
     # Load The Custom Classifier
-    CLASSIFIER_PATH = f'../Models/{company_id}.pkl'
+    pca[id_company] = PCA(n_components=n_components, whiten=True)
+    CLASSIFIER_PATH = f'../Models/{id_company}.pkl'
     with open(CLASSIFIER_PATH, 'rb') as file:
-        model[company_id], class_names[company_id] = pickle.load(file)
-    df_path = f'../src/df_{company_id}.pkl'
+        model[id_company], class_names[id_company] = pickle.load(file)
+    df_path = f'../Models/df_{id_company}.pkl'
     with open(df_path, 'rb') as file:
-        df[company_id] = pickle.load(file)
-
-    print(f"Custom Classifier, Successfully loaded {company_id} company models")
+        df[id_company] = pickle.load(file)
+        pca[id_company].fit(df[id_company].emb_array.apply(lambda x: list(map(float, x))).to_list())
+    print(f"Custom Classifier, Successfully loaded {id_company} company models")
 
 #load_trained_model('HHP')
 # load_trained_model('HHP_org')
@@ -259,8 +262,9 @@ for company in companies:
     df[company] = pd.DataFrame(columns = ['emb_array','name'])
     employees_list[company] = []
     company_list.append(company)
-    #model[company], class_names[company] = train(company)
-    load_trained_model(company)
+    pca[company] = PCA(n_components=n_components, whiten=True)
+    model[company], class_names[company] = train(company)
+    #load_trained_model(company)
 
 def gen_frames():
     global company_id_stream
@@ -271,7 +275,7 @@ def gen_frames():
     name = "Unknown"
     cap = VideoStream(src=0).start()
     # facenet.load_model(FACENET_MODEL_PATH)
-
+    print('total',len(employees_list[company_id_stream]))
     while (True):
         frame = cap.read()
         frame = imutils.resize(frame, width=600)
@@ -306,6 +310,7 @@ def gen_frames():
                         scaled_reshape = scaled.reshape(-1, INPUT_IMAGE_SIZE, INPUT_IMAGE_SIZE, 3)
                         feed_dict = {images_placeholder: scaled_reshape, phase_train_placeholder: False}
                         emb_array = sess.run(embeddings, feed_dict=feed_dict)
+                        emb_array = pca[company_id_stream].transform(emb_array)
                         # print(" lenght emb_array: ",len(emb_array))
                         predictions = model[company_id_stream].predict_proba(emb_array)
                         # print("predictions",predictions)
@@ -315,7 +320,7 @@ def gen_frames():
                         best_name = class_names[company_id_stream][best_class_indices[0]]
                         print("Name: {}, Probability: {}".format(best_name, best_class_probabilities))
 
-                        if best_class_probabilities > 0.6:
+                        if best_class_probabilities > 0.85:
                             cv2.rectangle(frame, (bb[i][0], bb[i][1]), (bb[i][2], bb[i][3]), (0, 255, 0), 2)
                             text_x = bb[i][0]
                             text_y = bb[i][1] - 20
@@ -354,7 +359,6 @@ def streamimg():
 def video_feed():
     return Response(gen_frames(), mimetype='multipart/x-mixed-replace; boundary=frame')
 
-
 def register():
     global company_id_reg
     global user_id_reg
@@ -374,9 +378,7 @@ def register():
     if not os.path.exists(path):
         os.mkdir(path)
         base = os.path.join(os.path.abspath(f'../static/{foldername}'), 'base')
-        os.mkdir(base)
-        # img = cv2.imread("../black_image.jpg")
-        # cv2.imwrite(f'{base}/black_image.jpg', img)
+        shutil.copytree(r'../7749/1', base)
         path = os.path.join(os.path.abspath(f'../static/{foldername}'), str(user_id_reg))
         os.mkdir(path)
 
@@ -542,12 +544,14 @@ def verify_web2():
             sc.status_code = 200
 
     return sc
-
+count_ = 0
 
 @app.route('/verify_web', methods=['GET', 'POST'])
 def verify_web():
     global model
     global class_names
+    global pca
+    global count_
     user_id_verify_web = '.'
     company_id_verify_web = '.'
     best_class_probabilities = []
@@ -561,60 +565,56 @@ def verify_web():
         bounding_boxes, _ = align.detect_face.detect_face(frame, MINSIZE, pnet, rnet, onet, THRESHOLD, FACTOR)
         name = 'Unknown'
         faces_found = bounding_boxes.shape[0]
-        try:
-            if faces_found > 1:
-                cv2.putText(frame, "Only one face", (0, 100), cv2.FONT_HERSHEY_COMPLEX_SMALL,
-                            1, (255, 255, 255), thickness=1, lineType=2)
-            elif faces_found > 0:
-                det = bounding_boxes[:, 0:4]
-                bb = np.zeros((faces_found, 4), dtype=np.int32)
-                for i in range(faces_found):
-                    bb[i][0] = det[i][0]
-                    bb[i][1] = det[i][1]
-                    bb[i][2] = det[i][2]
-                    bb[i][3] = det[i][3]
-                    # print(bb[i][3] - bb[i][1])
-                    # print(frame.shape[0])
-                    # print((bb[i][3] - bb[i][1]) / frame.shape[0])
-                    if (bb[i][3] - bb[i][1]) / frame.shape[0] > 0.25:
-                        cropped = frame[bb[i][1]:bb[i][3], bb[i][0]:bb[i][2], :]
-                        scaled = cv2.resize(cropped, (INPUT_IMAGE_SIZE, INPUT_IMAGE_SIZE),
-                                            interpolation=cv2.INTER_CUBIC)
-                        scaled = facenet.prewhiten(scaled)
-                        scaled_reshape = scaled.reshape(-1, INPUT_IMAGE_SIZE, INPUT_IMAGE_SIZE, 3)
-                        feed_dict = {images_placeholder: scaled_reshape, phase_train_placeholder: False}
-                        emb_array = sess.run(embeddings, feed_dict=feed_dict)
 
-                        predictions = model[company_id_verify_web].predict_proba(emb_array)
-                        best_class_indices = np.argmax(predictions, axis=1)
-                        best_class_probabilities = predictions[
-                            np.arange(len(best_class_indices)), best_class_indices]
-                        best_name = class_names[company_id_verify_web][best_class_indices[0]]
-                        print("Name: {}, Probability: {}".format(best_name, best_class_probabilities))
+        if faces_found > 1:
+            cv2.putText(frame, "Only one face", (0, 100), cv2.FONT_HERSHEY_COMPLEX_SMALL,
+                        1, (255, 255, 255), thickness=1, lineType=2)
+        elif faces_found > 0:
+            det = bounding_boxes[:, 0:4]
+            bb = np.zeros((faces_found, 4), dtype=np.int32)
+            for i in range(faces_found):
+                bb[i][0] = det[i][0]
+                bb[i][1] = det[i][1]
+                bb[i][2] = det[i][2]
+                bb[i][3] = det[i][3]
+                if (bb[i][3] - bb[i][1]) / frame.shape[0] > 0.25:
+                    cropped = frame[bb[i][1]:bb[i][3], bb[i][0]:bb[i][2], :]
+                    scaled = cv2.resize(cropped, (INPUT_IMAGE_SIZE, INPUT_IMAGE_SIZE),
+                                        interpolation=cv2.INTER_CUBIC)
+                    # cv2.imwrite(f"../test2/{count_}.png",scaled)
+                    # count_ = count_ +1
 
-                        if best_class_probabilities > 0.1:
-                            cv2.rectangle(frame, (bb[i][0], bb[i][1]), (bb[i][2], bb[i][3]), (0, 255, 0), 2)
-                            text_x = bb[i][0]
-                            text_y = bb[i][1] - 20
-
-                            name = class_names[company_id_verify_web][best_class_indices[0]]
-                            cv2.putText(frame, name, (text_x, text_y), cv2.FONT_HERSHEY_COMPLEX_SMALL,
-                                        1, (255, 255, 255), thickness=1, lineType=2)
-                            cv2.putText(frame, str(round(best_class_probabilities[0], 3)),
-                                        (text_x, text_y + 17),
-                                        cv2.FONT_HERSHEY_COMPLEX_SMALL,
-                                        1, (255, 255, 255), thickness=1, lineType=2)
-                            # person_detected[best_name] += 1
-                        else:
-                            name = "Unknown"
-            sc = jsonify({'company_id': company_id_verify_web, 'user_id': user_id_verify_web,'pred':name,
-                          'message': True if name == user_id_verify_web else False,
-                          "conf": best_class_probabilities[0]})
-            sc.status_code = 200
-        except:
-            sc = jsonify({'company_id': company_id_verify_web, 'user_id': user_id_verify_web,'pred':name,
-                          'message': True if name == user_id_verify_web else False})
-            sc.status_code = 404
+                    scaled = facenet.prewhiten(scaled)
+                    scaled_reshape = scaled.reshape(-1, INPUT_IMAGE_SIZE, INPUT_IMAGE_SIZE, 3)
+                    feed_dict = {images_placeholder: scaled_reshape, phase_train_placeholder: False}
+                    emb_array = sess.run(embeddings, feed_dict=feed_dict)
+                    emb_array = pca[company_id_verify_web].transform(emb_array)
+                    predictions = model[company_id_verify_web].predict(emb_array)
+                    # print(predictions)
+                    name = class_names[company_id_verify_web][predictions[0]]
+                    print(f"Name: {name}")
+                                # if True:
+                                #     cv2.rectangle(frame, (bb[i][0], bb[i][1]), (bb[i][2], bb[i][3]), (0, 255, 0), 2)
+                                #     text_x = bb[i][0]
+                                #     text_y = bb[i][1] - 20
+                                #
+                                #     name = best_name
+                                #     cv2.putText(frame, name, (text_x, text_y), cv2.FONT_HERSHEY_COMPLEX_SMALL,
+                                #                 1, (255, 255, 255), thickness=1, lineType=2)
+                                #     cv2.putText(frame, str(round(best_class_probabilities[0], 3)),
+                                #                 (text_x, text_y + 17),
+                                #                 cv2.FONT_HERSHEY_COMPLEX_SMALL,
+                                #                 1, (255, 255, 255), thickness=1, lineType=2)
+                                #     # person_detected[best_name] += 1
+                                # else:
+                                #     name = "Unknown"
+                    sc = jsonify({'company_id': company_id_verify_web, 'user_id': user_id_verify_web,'pred':name,
+                                  'message': True if name == user_id_verify_web else False})
+                    sc.status_code = 200
+                    # except:
+                    #     sc = jsonify({'company_id': company_id_verify_web, 'user_id': user_id_verify_web,'pred':name,
+                    #                   'message': True if name == user_id_verify_web else False})
+                    #     sc.status_code = 404
 
     return sc
 
