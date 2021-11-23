@@ -16,7 +16,7 @@ from six import iteritems
 from sklearn.model_selection import KFold
 from tensorflow.python.platform import gfile
 from tensorflow.python.training import training
-
+import imageio
 
 def triplet_loss(anchor, positive, negative, alpha):
     with tf.variable_scope('triplet_loss'):
@@ -212,7 +212,7 @@ def load_data(image_paths, do_random_crop, do_random_flip, image_size, do_prewhi
     nrof_samples = len(image_paths)
     images = np.zeros((nrof_samples, image_size, image_size, 3))
     for i in range(nrof_samples):
-        img = misc.imread(image_paths[i])
+        img =  imageio.imread(image_paths[i])
         if img.ndim == 2:
             img = to_rgb(img)
         if do_prewhiten:
@@ -224,7 +224,7 @@ def load_data(image_paths, do_random_crop, do_random_flip, image_size, do_prewhi
 
 def load_data1(image_paths, do_random_crop, do_random_flip, image_size, do_prewhiten=True):
     images = np.zeros((1, image_size, image_size, 3))
-    img = misc.imread(image_paths)
+    img = imageio.imread(image_paths)
     if img.ndim == 2:
         img = to_rgb(img)
     if do_prewhiten:
@@ -233,6 +233,7 @@ def load_data1(image_paths, do_random_crop, do_random_flip, image_size, do_prewh
     img = flip(img, do_random_flip)
     images[0, :, :, :] = img
     return images
+
 
 def get_label_batch(label_data, batch_size, batch_index):
     nrof_examples = np.size(label_data, 0)

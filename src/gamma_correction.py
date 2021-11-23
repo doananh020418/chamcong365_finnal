@@ -9,17 +9,11 @@ import math
 # METHOD 1: RGB
 
 # convert img to gray
-def gamma_correction1(img):
-    gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+def normalize(img):
+    norm_img = np.zeros((160,160))
+    nor_img = cv2.normalize(img, norm_img, 0, 255, cv2.NORM_MINMAX)
+    return nor_img
 
-    # compute gamma = log(mid*255)/log(mean)
-    mid = 0.5
-    mean = np.mean(gray)
-    gamma = math.log(mid*255)/math.log(mean)
-
-    # do gamma correction
-    img_gamma1 = np.power(img, gamma).clip(0,255).astype(np.uint8)
-    return img_gamma1
 
 
 # METHOD 2: HSV (or other color spaces)
@@ -40,5 +34,7 @@ def gamma_correction2(img):
     # combine new value channel with original hue and sat channels
     hsv_gamma = cv2.merge([hue, sat, val_gamma])
     img_gamma2 = cv2.cvtColor(hsv_gamma, cv2.COLOR_HSV2BGR)
+    norm_img = np.zeros((160,160))
+    img_gamma2 = cv2.normalize(img_gamma2, norm_img, 0, 255, cv2.NORM_MINMAX)
     return img_gamma2
 

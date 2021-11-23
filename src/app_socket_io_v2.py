@@ -21,7 +21,6 @@ import align.detect_face
 import facenet
 from faces_augmentation import *
 from gamma_correction import *
-#from Face_Anti_Spoofing.test_realtime import detect_spoofing
 import time
 app = Flask(__name__)
 import shutil
@@ -34,7 +33,7 @@ frame = 0
 from sklearn.decomposition import PCA
 ALLOWED_EXTENSIONS = {'jpg'}
 MINSIZE = 20
-THRESHOLD = [0.6, 0.7, 0.8]
+THRESHOLD = [0.7, 0.8, 0.8]
 FACTOR = 0.709
 #IMAGE_SIZE = 182
 INPUT_IMAGE_SIZE = 160
@@ -122,29 +121,31 @@ def train(id_company, id_user=None):
         classifier_filename_exp = os.path.expanduser(f'../Models/{id_company}.pkl')
         param_grid = {'C': [0.1, 1, 10, 100], 'gamma': [2000, 1000, 500, 300, 100, 10, 1, 0.1, 0.01, 0.001],
                       'kernel': ['rbf', 'poly', 'sigmoid', 'linear']}
-        #print('Training classifier')
+        print('Training classifier')
         
-        # x_train = df[id_company].emb_array.apply(lambda x: list(map(float, x))).to_list()
-        # pca[id_company].fit(x_train)
-        # x_train = pca[id_company].transform(x_train)
-        # y_train = df[id_company].name
-        # y_train = le.fit_transform(y_train)
+        x_train = df[id_company].emb_array.apply(lambda x: list(map(float, x))).to_list()
+        pca[id_company].fit(x_train)
+        x_train = pca[id_company].transform(x_train)
+        y_train = df[id_company].name
+        y_train = le.fit_transform(y_train)
         
-        # model = SVC(kernel='linear', probability=True)
+        model = SVC(kernel='linear', probability=True)
         
-        # tic = time.time()
-        # model.fit(x_train, y_train)
-        # print("function last", time.time() - tic)
-        
+        tic = time.time()
+        model.fit(x_train, y_train)
+        print("function last", time.time() - tic)
+        # model = GridSearchCV(SVC(), param_grid, refit=True, verbose=2)
+        # model.fit(emb_array, labels)
+        # print(model.best_estimator_)
         class_names = [cls.name.replace('_', ' ') for cls in dataset]
         employees_list[id_company] = class_names
         for class_name in list(set(class_names)):
             reg_hist[id_company][id_user] = True
 
         # Saving classifier model
-        # with open(classifier_filename_exp, 'wb') as outfile:
-        #     pickle.dump((model, class_names), outfile)
-        # return model, class_names
+        with open(classifier_filename_exp, 'wb') as outfile:
+            pickle.dump((model, class_names), outfile)
+        return model, class_names
 
     if id_user != None:
 
@@ -171,35 +172,34 @@ def train(id_company, id_user=None):
             emb_arrays.append(emb_array)
         tmp = pd.DataFrame(emb_arrays, columns=['emb_array', 'name'])
         df[id_company] = pd.concat([df[id_company],tmp])
+        df[id_company].to_pickle(f'../Models/df_{id_company}.pkl')
         if len(df[id_company]) > 150:
             df[id_company] = df[id_company][df[id_company]['name']!='base']
-        df[id_company].to_pickle(f'../Models/df_{id_company}.pkl')
-        
         classifier_filename_exp = os.path.expanduser(f'../Models/{id_company}.pkl')
-        # param_grid = {'C': [0.1, 1, 10, 100], 'gamma': [2000, 1000, 500, 300, 100, 10, 1, 0.1, 0.01, 0.001],
-        #               'kernel': ['rbf', 'poly', 'sigmoid', 'linear']}
+        param_grid = {'C': [0.1, 1, 10, 100], 'gamma': [2000, 1000, 500, 300, 100, 10, 1, 0.1, 0.01, 0.001],
+                      'kernel': ['rbf', 'poly', 'sigmoid', 'linear']}
 
-        # x_train = df[id_company].emb_array.apply(lambda x: list(map(float, x))).to_list()
-        # y_train = df[id_company].name
-        # y_train = le.fit_transform(y_train)
-        # print(len(x_train))
-        # pca[id_company].fit(x_train)
-        # x_train = pca[id_company].transform(x_train)
+        x_train = df[id_company].emb_array.apply(lambda x: list(map(float, x))).to_list()
+        y_train = df[id_company].name
+        y_train = le.fit_transform(y_train)
+        print(len(x_train))
+        pca[id_company].fit(x_train)
+        x_train = pca[id_company].transform(x_train)
         
-        # model = SVC(kernel='linear', probability=True)
+        model = SVC(kernel='linear', probability=True)
         
-        # tic = time.time()
-        # model.fit(x_train, y_train)
-        # print("function last", time.time() - tic)
+        tic = time.time()
+        model.fit(x_train, y_train)
+        print("function last", time.time() - tic)
         
-        # class_names = [cls.name.replace('_', ' ') for cls in dataset]
+        class_names = [cls.name.replace('_', ' ') for cls in dataset]
 
-        # # Saving classifier model
-        # with open(classifier_filename_exp, 'wb') as outfile:
-        #     pickle.dump((model, class_names), outfile)
-        # print('Saved classifier model to file "%s"' % classifier_filename_exp)
+        # Saving classifier model
+        with open(classifier_filename_exp, 'wb') as outfile:
+            pickle.dump((model, class_names), outfile)
+        print('Saved classifier model to file "%s"' % classifier_filename_exp)
 
-        # return model, class_names
+        return model, class_names
 
 
 def adjust_gamma(image, gamma=1.0):
@@ -211,27 +211,29 @@ def adjust_gamma(image, gamma=1.0):
 
 
 def load_trained_model(id_company):
-    # global model
-    # global class_names
+    global model
+    global class_names
     # Load The Custom Classifier
-    for id in os.listdir(f'../static/{id_company}'):
-        reg_hist[id_company][id] = True
-        reg_frame_count[id_company][id] = 0
-        count[id_company][id] = 0
-        employees_list[id_company].append(id)
+    CLASSIFIER_PATH = f'../Models/{id_company}.pkl'
+    with open(CLASSIFIER_PATH, 'rb') as file:
+        model[id_company], class_names[id_company] = pickle.load(file)
+        for id in os.listdir(f'../static/{id_company}'):
+            reg_hist[id_company][id] = True
+            reg_frame_count[id_company][id] = 0
+            employees_list[id_company].append(id)
             #print(id)
     df_path = f'../Models/df_{id_company}.pkl'
     with open(df_path, 'rb') as file:
         df[id_company] = pickle.load(file)
-        #pca[id_company].fit(df[id_company].emb_array.apply(lambda x: list(map(float, x))).to_list())
-    print(f"Custom Classifier, Successfully loaded {len(df)} company df")
+        pca[id_company].fit(df[id_company].emb_array.apply(lambda x: list(map(float, x))).to_list())
+    print(f"Custom Classifier, Successfully loaded {len(model)} company models")
 
 
 companies = os.listdir('../static')
 for company in companies:
-    if True:
+    if company == '57':
         company_list.append(company)
-        #pca[company] = PCA(n_components=n_components, whiten=True)
+        pca[company] = PCA(n_components=n_components, whiten=True)
         df[company]=pd.DataFrame(columns=['emb_array','name'])
         reg_hist[company] = {}
         employees_list[company] = []
@@ -241,18 +243,7 @@ for company in companies:
 
         #model[company], class_names[company] = train(company)
         load_trained_model(company)
-    else:
-        company_list.append(company)
-        #pca[company] = PCA(n_components=n_components, whiten=True)
-        df[company]=pd.DataFrame(columns=['emb_array','name'])
-        reg_hist[company] = {}
-        employees_list[company] = []
-        reg_stt[company]={}
-        reg_frame_count[company] = {}
-        count[company] = {}
-
-        train(company)
-        #load_trained_model(company)
+    
 
 
 
@@ -261,8 +252,13 @@ def allowed_file(filename):
 
 
 def base64ToImage(base64_string):
+    # file = open('hjhj.txt','a')
+    # file.write(base64_string)
     imgdata = base64.b64decode(base64_string)
     img = cv2.cvtColor(np.array(Image.open(io.BytesIO(imgdata))), cv2.COLOR_BGR2RGB)
+    # file_name = "test_mag.jpg"
+    # cv2.imwrite(file_name, img)
+    # cv2.imshow('img', img)
     return img
 
 
@@ -302,14 +298,16 @@ company = []
 
 
 @socketio.on('face_verify_app', namespace='/stream')
-def face_verify(input, user_id, company_id,isAndroid):
-    global df
+def face_verify(input, user_id, company_id):
     
+    # input = input.split(",")[1]
+    # users[company_id][user_id] = request.sid
     global model
+    # df = base_df[base_df['name'] == user_id.strip()]
     frame = base64ToImage(input)
-    if isAndroid:
-        frame = cv2.rotate(frame, cv2.ROTATE_90_COUNTERCLOCKWISE)
-    cv2.imwrite('app_frame.png',frame)
+    #frame = gamma_correction2(frame)
+    frame = cv2.rotate(frame, cv2.ROTATE_90_COUNTERCLOCKWISE)
+    #cv2.imwrite('hjhj.png',frame)
     bounding_boxes, _ = align.detect_face.detect_face(frame, MINSIZE, pnet, rnet, onet, THRESHOLD, FACTOR)
     name = 'Undetected'
     faces_found = bounding_boxes.shape[0]
@@ -324,52 +322,48 @@ def face_verify(input, user_id, company_id,isAndroid):
                 bb[i][1] = det[i][1]
                 bb[i][2] = det[i][2]
                 bb[i][3] = det[i][3]
-               
+                # print(bb[i][3] - bb[i][1])
+                # print(frame.shape[0])
+                # print((bb[i][3] - bb[i][1]) / frame.shape[0])
                 if (bb[i][3] - bb[i][1]) / frame.shape[0] > 0.25:
                     cropped = frame[bb[i][1]:bb[i][3], bb[i][0]:bb[i][2], :]
                     scaled = cv2.resize(cropped, (INPUT_IMAGE_SIZE, INPUT_IMAGE_SIZE),
                                         interpolation=cv2.INTER_CUBIC)
-                    
+                    #scaled = gamma_correction2(scaled)
                     cv2.imwrite('app.png',scaled)
                     scaled = normalize(scaled)
                     scaled = facenet.prewhiten(scaled)
                     scaled_reshape = scaled.reshape(-1, INPUT_IMAGE_SIZE, INPUT_IMAGE_SIZE, 3)
                     feed_dict = {images_placeholder: scaled_reshape, phase_train_placeholder: False}
                     emb_array = sess.run(embeddings, feed_dict=feed_dict)
-                    def findDistance(row):
-                        distance_metric = 'euclidean_l2'
-                        img2_representation = row['emb_array']
-                        distance = 1000  # initialize very large value
-                        if distance_metric == 'cosine':
-                            distance = dst.findCosineDistance(emb_array, img2_representation)
-                        elif distance_metric == 'euclidean':
-                            distance = dst.findEuclideanDistance(emb_array, img2_representation)
-                        elif distance_metric == 'euclidean_l2':
-                            distance = dst.findEuclideanDistance(dst.l2_normalize(emb_array),
-                                                                 dst.l2_normalize(img2_representation))
-
-                        return distance
-                    tmp_df = df[company_id][df[company_id]['name']==user_id]
-                    tmp_df['distance'] = tmp_df.apply(findDistance, axis=1)
-                    tmp_df = tmp_df.sort_values(by=["distance"])
-
-                    candidate = tmp_df.iloc[0]
-                    best_distance = candidate['distance']
-                    label = candidate['name']
-                    print(f'Best distance {best_distance}, name {label}')
-                    if best_distance <= 0.8:
-                        name = label
+                    emb_array = pca[company_id].transform(emb_array)
+                    predictions = model[company_id].predict(emb_array)
+                    # print(predictions)
+                    name = class_names[company_id][predictions[0]]
+                    
+                    # predictions = model[company_id].predict_proba(emb_array)
+                    # best_class_indices = np.argmax(predictions, axis=1)
+                    # best_class_probabilities = predictions[
+                    #     np.arange(len(best_class_indices)), best_class_indices]
+                    # best_name = class_names[company_id][best_class_indices[0]]
+                    # print("Name: {}, Probability: {}".format(best_name, best_class_probabilities))
+                    # name = best_name
+                    # if best_class_probabilities > 0.09:
+                    #     name = best_name
+                        
+                    # else:
+                    #     name = "Unknown"
 
     except:
         pass
-    frame = imageToBase64(frame)
-    #frame = None
+    #frame = imageToBase64(frame)
+    frame = None
     print("Name-app: ",name)
     socketio.emit('verify_app', {'result': name==user_id, 'image_data': frame}, namespace='/stream', to=request.sid)
 
 def reg_frame(frame, frame_count, count, path):
     face_detect = False
-    #THRESHOLD = [0.7, 0.8, 0.8]
+    THRESHOLD = [0.7, 0.8, 0.8]
     scale = 1
     INPUT_IMAGE_SIZE = 160
     frame = cv2.flip(frame, 1)
@@ -400,11 +394,19 @@ def reg_frame(frame, frame_count, count, path):
                     custom_face = cv2.resize(cropped, (INPUT_IMAGE_SIZE, INPUT_IMAGE_SIZE),
                                              interpolation=cv2.INTER_CUBIC)
                     custom_face = normalize(custom_face)
-                    
-                    cv2.imwrite(path + '/%d_org.png' % (count), custom_face)
-                    print("frame %d saved" % count)
-                    face_detect = True
-                    frame_count = frame_count + 1
+                    if count % 1 == 0:
+                        process_frame1 = adjust_gamma(custom_face,0.8)
+                        cv2.imwrite(path + '/%d_adjusted1.png' % (count), process_frame1)
+                        #cv2.imwrite(path + '/%d_adjusted2.png' % (count), custom_face)
+                        process_frame3 = adjust_gamma(custom_face, 0.6)
+                        cv2.imwrite(path + '/%d_adjusted3.png' % (count), process_frame3)
+                        process_frame4 = gamma_correction2(custom_face)
+                        cv2.imwrite(path + '/%d_adjusted4.png' % (count), process_frame4)
+                        process_frame5 = distort(custom_face)
+                        cv2.imwrite(path + '/%d_adjusted5.png' % (count), process_frame5)
+                        print("frame %d saved" % count)
+                        face_detect = True
+                        frame_count = frame_count + 1
 
         count = count + 1
     except:
@@ -413,19 +415,18 @@ def reg_frame(frame, frame_count, count, path):
     return frame_count, count, face_detect, False
 
 @socketio.on('face_register', namespace='/reg')
-def reg(input, user_id, company_id,isAndroid):  # add new employees
+def reg(input, user_id, company_id):  # add new employees
     global model
     global class_names
     face_reg = None
     foldername = str(company_id)
     path = os.path.join(os.path.abspath('../static'), foldername)
-    files = []
     if not os.path.exists(path):
         # employees_list[company_id]=[]
         
         os.mkdir(path)
-        # base = os.path.join(os.path.abspath(f'../static/{foldername}'), 'base')
-        # shutil.copytree('../2',base)
+        base = os.path.join(os.path.abspath(f'../static/{foldername}'), 'base')
+        shutil.copytree('../2',base)
         path = os.path.join(os.path.abspath(f'../static/{foldername}'), str(user_id))
         os.mkdir(path)
     elif not os.path.exists(os.path.join(os.path.abspath(f'../static/{foldername}'), str(user_id))):
@@ -434,11 +435,11 @@ def reg(input, user_id, company_id,isAndroid):  # add new employees
         os.mkdir(path)
     else:
         path = os.path.join(os.path.abspath(f'../static/{foldername}'), str(user_id))
-        # if reg_hist[company_id][user_id] == True:
-        #     reg_hist[company_id][user_id] = False
-        #     files = glob.glob(path + "/*")
-            # for f in files:
-            #     os.remove(f)
+        if reg_hist[company_id][user_id] == True:
+            reg_hist[company_id][user_id] = False
+            files = glob.glob(path + "/*")
+            for f in files:
+                os.remove(f)
 
     if not company_id in company_list:
         reg_hist[company_id] = {}
@@ -457,20 +458,17 @@ def reg(input, user_id, company_id,isAndroid):  # add new employees
         reg_frame_count[company_id][user_id] = 0
         count[company_id][user_id] = 0
     frame = base64ToImage(input)
-    if isAndroid:
-        frame = cv2.rotate(frame, cv2.ROTATE_90_COUNTERCLOCKWISE)
+    frame = cv2.rotate(frame, cv2.ROTATE_90_COUNTERCLOCKWISE)
     reg_frame_count[company_id][user_id], count[company_id][user_id], face_detect,multi_faces = reg_frame(frame,
                                                                                         reg_frame_count[company_id][user_id],
                                                                                         count[company_id][user_id],
                                                                                         path
                                                                                         )
-        
     # frame = imageToBase64(frame)
     if reg_frame_count[company_id][user_id] == 10:
         count[company_id][user_id] = 0
         reg_frame_count[company_id][user_id] = 0
-        # for f in files:
-        #     os.remove(f)
+        
         # return status: True mean register completed
         # return processed frame which show the regions including face
         files = glob.glob(path+'/*')
@@ -479,7 +477,7 @@ def reg(input, user_id, company_id,isAndroid):  # add new employees
         except:
             face_reg = None
         socketio.emit("registered", {'reg_stt': True, 'face_detect': face_detect,'multi_faces':multi_faces,'face_ret':face_reg}, namespace='/reg', to=request.sid)
-        train(company_id,user_id)
+        model[company_id], class_names[company_id] = train(company_id,user_id)
         reg_hist[company_id][user_id] = True
         print('Done!')
     else:
@@ -490,7 +488,6 @@ def reg(input, user_id, company_id,isAndroid):  # add new employees
 def verify_web():
     global model
     global class_names
-    global df
     multi_faces = False
     user_id_verify_web = '.'
     company_id_verify_web = '.'
@@ -508,15 +505,7 @@ def verify_web():
                   'message': "Unregisted"})
             sc.status_code = 200
             return sc
-        if user_id_verify_web not in employees_list[company_id_verify_web] or (len(df[company_id_verify_web][df[company_id_verify_web]['name']==user_id_verify_web]) < 5):
-            message = 'Unregisted'
-            sc = jsonify({'company_id': company_id_verify_web, 'user_id': user_id_verify_web,'pred':name,
-                  'message': message})
-            sc.status_code = 200
-            return sc
-
         frame = base64ToImageWeb(image)
-        cpy = frame.copy()
         bounding_boxes, _ = align.detect_face.detect_face(frame, MINSIZE, pnet, rnet, onet, THRESHOLD, FACTOR)
         faces_found = bounding_boxes.shape[0]
         # try:
@@ -533,45 +522,34 @@ def verify_web():
                 bb[i][3] = det[i][3]
                 
                 if (bb[i][3] - bb[i][1]) / frame.shape[0] > 0.25:
-                    #if detect_spoofing(cpy):
-                    if True:
-                        cropped = frame[bb[i][1]:bb[i][3], bb[i][0]:bb[i][2], :]
-                        scaled = cv2.resize(cropped, (INPUT_IMAGE_SIZE, INPUT_IMAGE_SIZE),
-                                            interpolation=cv2.INTER_CUBIC)
-                        cv2.imwrite('verify_web.png',scaled)
-                        scaled = normalize(scaled)
-                        scaled = facenet.prewhiten(scaled)
-                        scaled_reshape = scaled.reshape(-1, INPUT_IMAGE_SIZE, INPUT_IMAGE_SIZE, 3)
-                        feed_dict = {images_placeholder: scaled_reshape, phase_train_placeholder: False}
-                        emb_array = sess.run(embeddings, feed_dict=feed_dict)
-                        def findDistance(row):
-                            distance_metric = 'euclidean_l2'
-                            img2_representation = row['emb_array']
-                            distance = 1000  # initialize very large value
-                            if distance_metric == 'cosine':
-                                distance = dst.findCosineDistance(emb_array, img2_representation)
-                            elif distance_metric == 'euclidean':
-                                distance = dst.findEuclideanDistance(emb_array, img2_representation)
-                            elif distance_metric == 'euclidean_l2':
-                                distance = dst.findEuclideanDistance(dst.l2_normalize(emb_array),
-                                                                    dst.l2_normalize(img2_representation))
+                    cropped = frame[bb[i][1]:bb[i][3], bb[i][0]:bb[i][2], :]
+                    scaled = cv2.resize(cropped, (INPUT_IMAGE_SIZE, INPUT_IMAGE_SIZE),
+                                        interpolation=cv2.INTER_CUBIC)
+                    cv2.imwrite('face_web.png',scaled)
+                    scaled = normalize(scaled)
+                    scaled = facenet.prewhiten(scaled)
+                    scaled_reshape = scaled.reshape(-1, INPUT_IMAGE_SIZE, INPUT_IMAGE_SIZE, 3)
+                    feed_dict = {images_placeholder: scaled_reshape, phase_train_placeholder: False}
+                    emb_array = sess.run(embeddings, feed_dict=feed_dict)
+                    emb_array = pca[company_id_verify_web].transform(emb_array)
+                    predictions = model[company_id_verify_web].predict(emb_array)
+                    name = class_names[company_id_verify_web][predictions[0]]
+                    
 
-                            return distance
-                        tmp_df = df[company_id_verify_web][df[company_id_verify_web]['name']==user_id_verify_web]
-                        tmp_df['distance'] = tmp_df.apply(findDistance, axis=1)
-                        tmp_df = tmp_df.sort_values(by=["distance"])
+                    # best_class_indices = np.argmax(predictions, axis=1)
+                    # best_class_probabilities = predictions[
+                    #     np.arange(len(best_class_indices)), best_class_indices]
+                    # best_name = class_names[company_id_verify_web][best_class_indices[0]]
+                    # print("Name: {}, Probability: {}".format(best_name, best_class_probabilities))
 
-                        candidate = tmp_df.iloc[0]
-                        best_distance = candidate['distance']
-                        label = candidate['name']
-                        print(f'Best distance {best_distance}, name {label}')
-                        if best_distance <= 0.85:
-                            name = label
-    
+                    # if best_class_probabilities > 0.09:
+                    #     name = best_name
+                    # else:
+                    #     name = "Unknown"
     if name == user_id_verify_web:
         message = True
-    # elif user_id_verify_web not in employees_list[company_id_verify_web]:
-    #     message = 'Unregisted'
+    elif user_id_verify_web not in employees_list[company_id_verify_web]:
+        message = 'Unregisted'
     else:
         message = False
     print(f'Name: {name},Message: {message}')
@@ -582,9 +560,8 @@ def verify_web():
 
 @app.route('/verify_web_company', methods=['GET', 'POST'])
 def verify_web_company():
-    # global model
-    # global class_names
-    global df
+    global model
+    global class_names
     multi_faces = False
     company_id_verify_web = '.'
     name = "Undetected"
@@ -598,7 +575,7 @@ def verify_web_company():
             sc.status_code = 200
             return sc
         frame = base64ToImageWeb(image)
-        cv2.imwrite('company_web.png',frame)
+        cv2.imwrite('haha.png',frame)
         bounding_boxes, _ = align.detect_face.detect_face(frame, MINSIZE, pnet, rnet, onet, THRESHOLD, FACTOR)
         faces_found = bounding_boxes.shape[0]
         # try:
@@ -622,29 +599,19 @@ def verify_web_company():
                     scaled_reshape = scaled.reshape(-1, INPUT_IMAGE_SIZE, INPUT_IMAGE_SIZE, 3)
                     feed_dict = {images_placeholder: scaled_reshape, phase_train_placeholder: False}
                     emb_array = sess.run(embeddings, feed_dict=feed_dict)
-                    def findDistance(row):
-                        distance_metric = 'euclidean_l2'
-                        img2_representation = row['emb_array']
-                        distance = 1000  # initialize very large value
-                        if distance_metric == 'cosine':
-                            distance = dst.findCosineDistance(emb_array, img2_representation)
-                        elif distance_metric == 'euclidean':
-                            distance = dst.findEuclideanDistance(emb_array, img2_representation)
-                        elif distance_metric == 'euclidean_l2':
-                            distance = dst.findEuclideanDistance(dst.l2_normalize(emb_array),
-                                                                 dst.l2_normalize(img2_representation))
+                    emb_array = pca[company_id_verify_web].transform(emb_array)
+                    predictions = model[company_id_verify_web].predict_proba(emb_array)
+                    # name = class_names[company_id_verify_web][predictions[0]]
+                    # print(f"Name: {name}")
 
-                        return distance
-                    tmp_df = df[company_id_verify_web]
-                    tmp_df['distance'] = tmp_df.apply(findDistance, axis=1)
-                    tmp_df = tmp_df.sort_values(by=["distance"])
+                    best_class_indices = np.argmax(predictions, axis=1)
+                    best_class_probabilities = predictions[
+                        np.arange(len(best_class_indices)), best_class_indices]
+                    best_name = class_names[company_id_verify_web][best_class_indices[0]]
+                    print("Name: {}, Probability: {}".format(best_name, best_class_probabilities))
 
-                    candidate = tmp_df.iloc[0]
-                    best_distance = candidate['distance']
-                    label = candidate['name']
-                    print(f'Best distance {best_distance}, name {label}')
-                    if best_distance <= 0.8:
-                        name = label
+                    if best_class_probabilities > 0.1:
+                        name = best_name
                     else:
                         name = "Unknown"
     sc = jsonify({'user_id': name})
@@ -653,20 +620,18 @@ def verify_web_company():
 
 @app.route('/register_web', methods=['GET', 'POST'])
 def register_web():
-    global df
-    # global model
-    # global class_names
+    global model
+    global class_names
     THRESHOLD = [0.6, 0.7, 0.8]
     user_id = request.args.get('user_id')
     print("Register web, id: ",user_id)
     company_id = request.args.get('company_id')
     foldername = str(company_id)
     path = os.path.join(os.path.abspath('../static'), foldername)
-    files = []
     if not os.path.exists(path):
         os.mkdir(path)
-        # base = os.path.join(os.path.abspath(f'../static/{foldername}'), 'base')
-        # shutil.copytree('../2',base)
+        base = os.path.join(os.path.abspath(f'../static/{foldername}'), 'base')
+        shutil.copytree('../2',base)
         path = os.path.join(os.path.abspath(f'../static/{foldername}'), str(user_id))
         os.mkdir(path)
     elif not os.path.exists(os.path.join(os.path.abspath(f'../static/{foldername}'), str(user_id))):
@@ -674,9 +639,9 @@ def register_web():
         os.mkdir(path)
     else:
         path = os.path.join(os.path.abspath(f'../static/{foldername}'), str(user_id))
-        #files = glob.glob(path + '/*')
-        # for f in files:
-        #     os.remove(f)
+        files = glob.glob(path + '/*')
+        for f in files:
+            os.remove(f)
 
     if not company_id in company_list:
         df[company_id] = pd.DataFrame(columns=['emb_array', 'name'])
@@ -722,19 +687,21 @@ def register_web():
                                                 interpolation=cv2.INTER_CUBIC)
 
                         custom_face = normalize(custom_face)
-                        
-                        cv2.imwrite(path + '/%d_org.png' % (count), custom_face)
-                        
+                        process_frame1 = adjust_gamma(custom_face, 0.7)
+                        cv2.imwrite(path + '/%d_adjusted1.png' % (count), process_frame1)
+                        cv2.imwrite(path + '/%d_adjusted2.png' % (count), custom_face)
+                        process_frame3 = adjust_gamma(custom_face, 1.2)
+                        cv2.imwrite(path + '/%d_adjusted3.png' % (count), process_frame3)
+                        process_frame4 = distort(custom_face)
+                        cv2.imwrite(path + '/%d_adjusted4.png' % (count), process_frame4)
+                        process_frame5 = gamma_correction2(custom_face)
+                        cv2.imwrite(path + '/%d_adjusted5.png' % (count), process_frame5)
                         print("frame %d saved" % count)
             count = count + 1
         except:
             pass
 
-    # model[company_id], class_names[company_id] = 
-    # if count > 5:
-    #     for f in files:
-    #         os.remove(f)
-    train(company_id,user_id)
+    model[company_id], class_names[company_id] = train(company_id,user_id)
     sc = jsonify({'company_id': company_id, 'user_id': user_id,
                   'message':count==total })
     sc.status_code = 200

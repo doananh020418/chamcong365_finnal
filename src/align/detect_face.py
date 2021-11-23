@@ -4,9 +4,10 @@ from __future__ import absolute_import
 from __future__ import division
 from __future__ import print_function
 from six import string_types, iteritems
-
+import imageio
 import numpy as np
 import tensorflow as tf
+tf.compat.v1.disable_eager_execution()
 #from math import floor
 import cv2
 import os
@@ -168,7 +169,7 @@ class Network(object):
                     dim *= int(d)
                 feed_in = tf.compat.v1.reshape(inp, [-1, dim])
             else:
-                feed_in, dim = (inp, input_shape[-1].value)
+                feed_in, dim = (inp, input_shape[-1])
             weights = self.make_var('weights', shape=[dim, num_out])
             biases = self.make_var('biases', [num_out])
             op = tf.compat.v1.nn.relu_layer if relu else tf.compat.v1.nn.xw_plus_b
