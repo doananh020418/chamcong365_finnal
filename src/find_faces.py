@@ -1,0 +1,274 @@
+from __future__ import absolute_import
+from __future__ import division
+from __future__ import print_function
+
+import base64
+import glob
+import io
+import os
+import pickle
+
+import pandas as pd
+import tensorflow as tf
+from PIL import Image, ImageFile
+from tqdm import tqdm
+
+import distance as dst
+import facenet
+
+ImageFile.LOAD_TRUNCATED_IMAGES = True
+from flask import Flask, request, jsonify
+
+import align.detect_face
+from gamma_correction import *
+
+def adjust_gamma(image, gamma=1.0):
+    invGamma = 1.0 / gamma
+    table = np.array([((i / 255.0) ** invGamma) * 255
+                      for i in np.arange(0, 256)]).astype("uint8")
+
+    return cv2.LUT(image, table)
+
+
+MINSIZE = 20
+THRESHOLD = [0.6, 0.7, 0.7]
+FACTOR = 0.709
+IMAGE_SIZE = 182
+INPUT_IMAGE_SIZE = 160
+FACENET_MODEL_PATH = '../Models/20180402-114759.pb'
+
+tf.Graph().as_default()
+
+gpu_options = tf.compat.v1.GPUOptions(per_process_gpu_memory_fraction=0.6)
+sess = tf.compat.v1.Session(config=tf.compat.v1.ConfigProto(gpu_options=gpu_options, log_device_placement=False))
+
+# Load the model
+print('Loading feature extraction model')
+facenet.load_model(FACENET_MODEL_PATH)
+
+# Get input and output tensors
+images_placeholder = tf.compat.v1.get_default_graph().get_tensor_by_name("input:0")
+embeddings = tf.compat.v1.get_default_graph().get_tensor_by_name("embeddings:0")
+phase_train_placeholder = tf.compat.v1.get_default_graph().get_tensor_by_name("phase_train:0")
+embedding_size = embeddings.get_shape()[1]
+pnet, rnet, onet = align.detect_face.create_mtcnn(sess, "align")
+
+app = Flask(__name__)
+df = pd.DataFrame()
+
+
+def embedding_faces(id_user=None):
+    global df
+    image_size = 160
+    np.random.seed(seed=666)
+    dataset = facenet.get_dataset(f'../static/face_data')
+    # Check that there are at least one training image per class
+    paths, labels = facenet.get_image_paths_and_labels(dataset)
+    if id_user == None:
+        emb_arrays = []
+        for path in tqdm(paths):
+            emb_array = []
+            images = facenet.load_data1(path, False, False, image_size)
+            feed_dict = {images_placeholder: images, phase_train_placeholder: False}
+            emb_array.append(sess.run(embeddings, feed_dict=feed_dict)[0])
+            emb_array.append(path.split('/')[-2])
+            emb_arrays.append(emb_array)
+        df = pd.DataFrame(emb_arrays, columns=['emb_array', 'name'])
+        df.to_pickle(f'../Models/df_face_data.pkl')
+
+    if id_user != None:
+        new_paths = glob.glob(f'../static/face_data/{id_user}/*')
+        emb_arrays = []
+        for path in tqdm(new_paths):
+            emb_array = []
+            images = facenet.load_data1(path, False, False, image_size)
+            feed_dict = {images_placeholder: images, phase_train_placeholder: False}
+            emb_array.append(sess.run(embeddings, feed_dict=feed_dict)[0])
+            emb_array.append(path.split('/')[-2])
+            emb_arrays.append(emb_array)
+        tmp = pd.DataFrame(emb_arrays, columns=['emb_array', 'name'])
+        df = pd.concat([df, tmp])
+        df.to_pickle('../Models/df_face_data}.pkl')
+
+
+def base64ToImage(base64_string):
+    imgdata = base64.b64decode(base64_string)
+    img = cv2.cvtColor(np.array(Image.open(io.BytesIO(imgdata))), cv2.COLOR_BGR2RGB)
+    return img
+
+
+def base64ToImageWeb(base64_string):
+    base64_string = base64_string.split(',')[-1]
+    imgdata = base64.b64decode(base64_string)
+    img = cv2.cvtColor(np.array(Image.open(io.BytesIO(imgdata))), cv2.COLOR_BGR2RGB)
+    return img
+
+
+def imageToBase64(image):
+    retval, buffer = cv2.imencode('.png', image)
+    jpg_as_text = base64.b64encode(buffer)
+    image_data = jpg_as_text.decode("utf-8")
+    image_data = str(image_data)
+    return image_data
+
+
+def load_faces_data():
+    global df
+    with open('../Models/df_face_data.pkl', 'rb') as file:
+        df = pickle.load(file)
+    print(f"Faces data loaded! ")
+
+
+@app.route('/train')
+def retrain():
+    global df
+    embedding_faces()
+    sc = jsonify({'message': 'Done'})
+    sc.status_code = 200
+    return sc
+
+
+@app.route('/find_user', methods=['GET', 'POST'])
+def find_user():
+    global df
+    label = "Undetected"
+    scale = 1
+    top5 = False
+    image = ''
+    if True:
+        contents = request.json
+        for content in contents:
+            image = content['image']
+        frame = base64ToImageWeb(image)
+        frame = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+        cpy = frame.copy()
+        img = cv2.resize(cpy, (int(cpy.shape[1] * scale), int(cpy.shape[0] * scale)), interpolation=cv2.INTER_AREA)
+        bounding_boxes, _ = align.detect_face.detect_face(img, MINSIZE, pnet, rnet, onet, THRESHOLD, FACTOR)
+        faces_found = bounding_boxes.shape[0]
+        # try:
+        if faces_found > 0:
+            det = bounding_boxes[:, 0:4]
+            bb = np.zeros((faces_found, 4), dtype=np.int32)
+            for i in range(len(faces_found)):
+                bb[i][0] = det[i][0] / scale
+                bb[i][1] = det[i][1] / scale
+                bb[i][2] = det[i][2] / scale
+                bb[i][3] = det[i][3] / scale
+
+                if (bb[i][3] - bb[i][1]) / frame.shape[0] > 0:
+                    # if detect_spoofing(cpy):
+                    if True:
+                        cropped = frame[bb[i][1]:bb[i][3], bb[i][0]:bb[i][2], :]
+                        scaled = cv2.resize(cropped, (INPUT_IMAGE_SIZE, INPUT_IMAGE_SIZE),
+                                            interpolation=cv2.INTER_CUBIC)
+                        #cv2.imwrite('verify_web.png', scaled)
+                        scaled = normalize(scaled)
+                        scaled = facenet.prewhiten(scaled)
+                        scaled_reshape = scaled.reshape(-1, INPUT_IMAGE_SIZE, INPUT_IMAGE_SIZE, 3)
+                        feed_dict = {images_placeholder: scaled_reshape, phase_train_placeholder: False}
+                        emb_array = sess.run(embeddings, feed_dict=feed_dict)
+
+                        def findDistance(row):
+                            distance_metric = 'euclidean_l2'
+                            img2_representation = row['emb_array']
+                            distance = 1000  # initialize very large value
+                            if distance_metric == 'cosine':
+                                distance = dst.findCosineDistance(emb_array, img2_representation)
+                            elif distance_metric == 'euclidean':
+                                distance = dst.findEuclideanDistance(emb_array, img2_representation)
+                            elif distance_metric == 'euclidean_l2':
+                                distance = dst.findEuclideanDistance(dst.l2_normalize(emb_array),
+                                                                     dst.l2_normalize(img2_representation))
+
+                            return distance
+
+                        tmp_df = df.copy()
+                        tmp_df['distance'] = tmp_df.apply(findDistance, axis=1)
+                        tmp_df = tmp_df.sort_values(by=["distance"])
+                        if top5:
+                            candidate = tmp_df.iloc[:5]
+                            best_distance = candidate['distance']
+                            label = candidate['name']
+                        else:
+                            candidate = tmp_df.iloc[0]
+                            best_distance = candidate['distance']
+                            label = candidate['name']
+                        del tmp_df
+                        print(f'Best distance {best_distance}, name {label}')
+    sc = jsonify({'user_id': label})
+    sc.status_code = 200
+    return sc
+
+
+@app.route('/add_faces', methods=['GET', 'POST'])
+def add_faces():
+    user_id = request.args.get('user_id')
+    foldername = 'face_data'
+    path = os.path.join(os.path.abspath('../static'), foldername)
+    if not os.path.exists(path):
+        os.mkdir(path)
+        path = os.path.join(os.path.abspath(f'../static/{foldername}'), str(user_id))
+        os.mkdir(path)
+
+    elif not os.path.exists(os.path.join(os.path.abspath(f'../static/{foldername}'), str(user_id))):
+        path = os.path.join(os.path.abspath(f'../static/{foldername}'), str(user_id))
+        os.mkdir(path)
+    else:
+        path = os.path.join(os.path.abspath(f'../static/{foldername}'), str(user_id))
+    contents = request.json
+    scale = 0.5
+    count = 0
+    reg_frame = 0
+    total = len(contents)
+    curr_faces = len(glob.glob(path + '/*'))
+    for content in contents:
+        image = content['image']
+        frame = base64ToImageWeb(image)
+        frame = normalize(frame)
+        frame = cv2.cvtColor(frame,cv2.COLOR_BGR2GRAY)
+        img = frame.copy()
+        # base_img = frame.copy()
+        # img = cv2.resize(img, (int(img.shape[1] * scale), int(img.shape[0] * scale)),
+        #                  interpolation=cv2.INTER_AREA)
+        bounding_boxes, _ = align.detect_face.detect_face(img, MINSIZE, pnet, rnet, onet, THRESHOLD, FACTOR)
+
+        faces_found = bounding_boxes.shape[0]
+
+        if faces_found > 1:
+            cv2.putText(frame, "Only one face", (0, 100), cv2.FONT_HERSHEY_COMPLEX_SMALL,
+                        1, (255, 255, 255), thickness=1, lineType=2)
+        elif faces_found > 0:
+            det = bounding_boxes[:, 0:4]
+            bb = np.zeros((faces_found, 4), dtype=np.int32)
+            for i in range(faces_found):
+                bb[i][0] = det[i][0]
+                bb[i][1] = det[i][1]
+                bb[i][2] = det[i][2]
+                bb[i][3] = det[i][3]
+                # print(bb[i][3] - bb[i][1])
+                # print(frame.shape[0])
+                # print((bb[i][3] - bb[i][1]) / frame.shape[0])
+                if (bb[i][3] - bb[i][1]) / frame.shape[0] > 0.25:
+                    cropped = frame[bb[i][1]:bb[i][3], bb[i][0]:bb[i][2], :]
+                    # cv2.rectangle(frame, (bb[i][0], bb[i][1]), (bb[i][2], bb[i][3]), (0, 255, 0), 2)
+                    custom_face = cv2.resize(cropped, (INPUT_IMAGE_SIZE, INPUT_IMAGE_SIZE),
+                                             interpolation=cv2.INTER_CUBIC)
+                    print(custom_face)
+                    cv2.imwrite(path + f'/%d.png' % (curr_faces), custom_face)
+                    print("frame %d saved" % curr_faces)
+                    curr_faces = curr_faces + 1
+                    reg_frame = reg_frame + 1
+
+    embedding_faces(user_id)
+    sc = jsonify({'message':'Done'})
+    sc.status_code = 200
+    # except:
+    #     sc = jsonify({'company_id': company_id_reg_web, 'user_id': user_id_reg_web,
+    #                   'message': f"Up load register image unsuccessfull! {count}/{total} images uploaded!"})
+    #     sc.status_code = 404
+    return sc
+
+
+if __name__ == '__main__':
+    embedding_faces()
+    app.run(debug=False, host='0.0.0.0', port=5002)

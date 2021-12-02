@@ -11,7 +11,7 @@ import time
 
 import imutils
 import tensorflow as tf
-#import torch
+import torch
 from PIL import Image, ImageFile
 from sklearn.svm import SVC
 
@@ -19,7 +19,7 @@ import facenet
 from faces_augmentation import *
 
 ImageFile.LOAD_TRUNCATED_IMAGES = True
-#from facenet_pytorch import MTCNN
+from facenet_pytorch import MTCNN
 from flask import Flask, Response, request, jsonify
 from flask import render_template
 from imutils.video import VideoStream
@@ -28,14 +28,14 @@ import align.detect_face
 # from classifier import *
 from gamma_correction import *
 
-# device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
-#
-# mtcnn = MTCNN(
-#     margin=44,
-#     factor=0.8,
-#     keep_all=False,
-#     device=device
-# )
+device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
+
+mtcnn = MTCNN(
+    margin=44,
+    factor=0.8,
+    keep_all=False,
+    device=device
+)
 
 
 def adjust_gamma(image, gamma=1.0):
@@ -188,9 +188,9 @@ def retrain():
     return sc
 
 
-companies = os.listdir('../static')
-for company in companies:
-    model[company], class_names[company] = train(company)
+# companies = os.listdir('../static')
+# for company in companies:
+#     model[company], class_names[company] = train(company)
     #load_trained_model(company)
 
 
@@ -201,71 +201,76 @@ def gen_frames():
     # print("total number of model",len(model))
     print(company_id_stream)
     name = "Unknown"
+    scale = 0.1
     cap = VideoStream(src=0).start()
     # facenet.load_model(FACENET_MODEL_PATH)
-
+    ptime = 0
     while (True):
         frame = cap.read()
-        frame = imutils.resize(frame, width=600)
+        print(frame.shape)
+        #frame = imutils.resize(frame, width=600)
         frame = cv2.flip(frame, 1)
         # frame = gamma_correction2(frame)
-
-        bounding_boxes, _ = align.detect_face.detect_face(frame, MINSIZE, pnet, rnet, onet, THRESHOLD, FACTOR)
+        img = cv2.resize(frame, (int(frame.shape[1] * scale), int(frame.shape[0] * scale)), interpolation=cv2.INTER_AREA)
+        bounding_boxes, _ = align.detect_face.detect_face(img, MINSIZE, pnet, rnet, onet, THRESHOLD, FACTOR)
 
         faces_found = bounding_boxes.shape[0]
 
-        try:
-            if faces_found > 1:
-                cv2.putText(frame, "Only one face", (0, 100), cv2.FONT_HERSHEY_COMPLEX_SMALL,
-                            1, (255, 255, 255), thickness=1, lineType=2)
-            elif faces_found > 0:
-                det = bounding_boxes[:, 0:4]
-                bb = np.zeros((faces_found, 4), dtype=np.int32)
-                for i in range(faces_found):
-                    bb[i][0] = det[i][0]
-                    bb[i][1] = det[i][1]
-                    bb[i][2] = det[i][2]
-                    bb[i][3] = det[i][3]
-                    # print(bb[i][3] - bb[i][1])
-                    # print(frame.shape[0])
-                    # print((bb[i][3] - bb[i][1]) / frame.shape[0])
-                    if (bb[i][3] - bb[i][1]) / frame.shape[0] > 0.25:
-                        cropped = frame[bb[i][1]:bb[i][3], bb[i][0]:bb[i][2], :]
-                        scaled = cv2.resize(cropped, (INPUT_IMAGE_SIZE, INPUT_IMAGE_SIZE),
-                                            interpolation=cv2.INTER_CUBIC)
-                        scaled = facenet.prewhiten(scaled)
-
-                        scaled_reshape = scaled.reshape(-1, INPUT_IMAGE_SIZE, INPUT_IMAGE_SIZE, 3)
-                        feed_dict = {images_placeholder: scaled_reshape, phase_train_placeholder: False}
-                        emb_array = sess.run(embeddings, feed_dict=feed_dict)
-                        # print(" lenght emb_array: ",len(emb_array))
-                        predictions = model[company_id_stream].predict_proba(emb_array)
-                        # print("predictions",predictions)
-                        best_class_indices = np.argmax(predictions, axis=1)
-                        best_class_probabilities = predictions[
-                            np.arange(len(best_class_indices)), best_class_indices]
-                        best_name = class_names[company_id_stream][best_class_indices[0]]
-                        print("Name: {}, Probability: {}".format(best_name, best_class_probabilities))
-
-                        if best_class_probabilities > 0.6:
-                            cv2.rectangle(frame, (bb[i][0], bb[i][1]), (bb[i][2], bb[i][3]), (0, 255, 0), 2)
-                            text_x = bb[i][0]
-                            text_y = bb[i][1] - 20
-
-                            name = class_names[company_id_stream][best_class_indices[0]]
-                            cv2.putText(frame, name, (text_x, text_y), cv2.FONT_HERSHEY_COMPLEX_SMALL,
-                                        1, (255, 255, 255), thickness=1, lineType=2)
-                            cv2.putText(frame, str(round(best_class_probabilities[0], 3)),
-                                        (text_x, text_y + 17),
-                                        cv2.FONT_HERSHEY_COMPLEX_SMALL,
-                                        1, (255, 255, 255), thickness=1, lineType=2)
-                            # person_detected[best_name] += 1
-                        else:
-                            name = "Unknown"
-
-        except:
-            pass
-
+        # try:
+        #     if faces_found > 1:
+        #         cv2.putText(frame, "Only one face", (0, 100), cv2.FONT_HERSHEY_COMPLEX_SMALL,
+        #                     1, (255, 255, 255), thickness=1, lineType=2)
+        #     elif faces_found > 0:
+        #         det = bounding_boxes[:, 0:4]
+        #         bb = np.zeros((faces_found, 4), dtype=np.int32)
+        #         for i in range(faces_found):
+        #             bb[i][0] = det[i][0]
+        #             bb[i][1] = det[i][1]
+        #             bb[i][2] = det[i][2]
+        #             bb[i][3] = det[i][3]
+        #             # print(bb[i][3] - bb[i][1])
+        #             # print(frame.shape[0])
+        #             # print((bb[i][3] - bb[i][1]) / frame.shape[0])
+        #             if (bb[i][3] - bb[i][1]) / frame.shape[0] > 0.25:
+        #                 cropped = frame[bb[i][1]:bb[i][3], bb[i][0]:bb[i][2], :]
+        #                 scaled = cv2.resize(cropped, (INPUT_IMAGE_SIZE, INPUT_IMAGE_SIZE),
+        #                                     interpolation=cv2.INTER_CUBIC)
+        #                 scaled = facenet.prewhiten(scaled)
+        #
+        #                 scaled_reshape = scaled.reshape(-1, INPUT_IMAGE_SIZE, INPUT_IMAGE_SIZE, 3)
+        #                 feed_dict = {images_placeholder: scaled_reshape, phase_train_placeholder: False}
+        #                 emb_array = sess.run(embeddings, feed_dict=feed_dict)
+        #                 # print(" lenght emb_array: ",len(emb_array))
+        #                 predictions = model[company_id_stream].predict_proba(emb_array)
+        #                 # print("predictions",predictions)
+        #                 best_class_indices = np.argmax(predictions, axis=1)
+        #                 best_class_probabilities = predictions[
+        #                     np.arange(len(best_class_indices)), best_class_indices]
+        #                 best_name = class_names[company_id_stream][best_class_indices[0]]
+        #                 print("Name: {}, Probability: {}".format(best_name, best_class_probabilities))
+        #
+        #                 if best_class_probabilities > 0.6:
+        #                     cv2.rectangle(frame, (bb[i][0], bb[i][1]), (bb[i][2], bb[i][3]), (0, 255, 0), 2)
+        #                     text_x = bb[i][0]
+        #                     text_y = bb[i][1] - 20
+        #
+        #                     name = class_names[company_id_stream][best_class_indices[0]]
+        #                     cv2.putText(frame, name, (text_x, text_y), cv2.FONT_HERSHEY_COMPLEX_SMALL,
+        #                                 1, (255, 255, 255), thickness=1, lineType=2)
+        #                     cv2.putText(frame, str(round(best_class_probabilities[0], 3)),
+        #                                 (text_x, text_y + 17),
+        #                                 cv2.FONT_HERSHEY_COMPLEX_SMALL,
+        #                                 1, (255, 255, 255), thickness=1, lineType=2)
+        #                     # person_detected[best_name] += 1
+        #                 else:
+        #                     name = "Unknown"
+        #
+        # except:
+        #     pass
+        ctime = time.time()
+        fps = 1 / (ctime - ptime)
+        ptime = ctime
+        print(fps)
         ret, buffer = cv2.imencode('.jpg', frame)
         frame = buffer.tobytes()
         yield (b'--frame\r\n'
