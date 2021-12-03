@@ -18,9 +18,10 @@ import facenet
 
 ImageFile.LOAD_TRUNCATED_IMAGES = True
 from flask import Flask, request, jsonify
-
+from flask_socketio import SocketIO
 import align.detect_face
 from gamma_correction import *
+
 
 def adjust_gamma(image, gamma=1.0):
     invGamma = 1.0 / gamma
@@ -54,14 +55,15 @@ embedding_size = embeddings.get_shape()[1]
 pnet, rnet, onet = align.detect_face.create_mtcnn(sess, "align")
 
 app = Flask(__name__)
+socketio = SocketIO(app)
 df = pd.DataFrame()
 
 
-def embedding_faces(id_user=None):
+def embedding_faces(id_user=None, new_paths=None):
     global df
     image_size = 160
     np.random.seed(seed=666)
-    dataset = facenet.get_dataset(f'../static/face_data')
+    dataset = facenet.get_dataset(f'../static2/face_data')
     # Check that there are at least one training image per class
     paths, labels = facenet.get_image_paths_and_labels(dataset)
     if id_user == None:
@@ -77,7 +79,6 @@ def embedding_faces(id_user=None):
         df.to_pickle(f'../Models/df_face_data.pkl')
 
     if id_user != None:
-        new_paths = glob.glob(f'../static/face_data/{id_user}/*')
         emb_arrays = []
         for path in tqdm(new_paths):
             emb_array = []
@@ -89,6 +90,7 @@ def embedding_faces(id_user=None):
         tmp = pd.DataFrame(emb_arrays, columns=['emb_array', 'name'])
         df = pd.concat([df, tmp])
         df.to_pickle('../Models/df_face_data}.pkl')
+    print("len df ", len(df))
 
 
 def base64ToImage(base64_string):
@@ -132,15 +134,17 @@ def retrain():
 def find_user():
     global df
     label = "Undetected"
-    scale = 1
-    top5 = False
+    scale = 0.25
+    top5 = True
     image = ''
     if True:
         contents = request.json
+        # print(len(contents))
         for content in contents:
             image = content['image']
         frame = base64ToImageWeb(image)
         frame = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+        frame = np.stack((frame,) * 3, axis=-1)
         cpy = frame.copy()
         img = cv2.resize(cpy, (int(cpy.shape[1] * scale), int(cpy.shape[0] * scale)), interpolation=cv2.INTER_AREA)
         bounding_boxes, _ = align.detect_face.detect_face(img, MINSIZE, pnet, rnet, onet, THRESHOLD, FACTOR)
@@ -149,7 +153,7 @@ def find_user():
         if faces_found > 0:
             det = bounding_boxes[:, 0:4]
             bb = np.zeros((faces_found, 4), dtype=np.int32)
-            for i in range(len(faces_found)):
+            for i in range(faces_found):
                 bb[i][0] = det[i][0] / scale
                 bb[i][1] = det[i][1] / scale
                 bb[i][2] = det[i][2] / scale
@@ -161,7 +165,7 @@ def find_user():
                         cropped = frame[bb[i][1]:bb[i][3], bb[i][0]:bb[i][2], :]
                         scaled = cv2.resize(cropped, (INPUT_IMAGE_SIZE, INPUT_IMAGE_SIZE),
                                             interpolation=cv2.INTER_CUBIC)
-                        #cv2.imwrite('verify_web.png', scaled)
+                        # cv2.imwrite('verify_web.png', scaled)
                         scaled = normalize(scaled)
                         scaled = facenet.prewhiten(scaled)
                         scaled_reshape = scaled.reshape(-1, INPUT_IMAGE_SIZE, INPUT_IMAGE_SIZE, 3)
@@ -185,7 +189,7 @@ def find_user():
                         tmp_df = df.copy()
                         tmp_df['distance'] = tmp_df.apply(findDistance, axis=1)
                         tmp_df = tmp_df.sort_values(by=["distance"])
-                        if top5:
+                        if top5 and len(tmp_df) > 5:
                             candidate = tmp_df.iloc[:5]
                             best_distance = candidate['distance']
                             label = candidate['name']
@@ -204,63 +208,60 @@ def find_user():
 def add_faces():
     user_id = request.args.get('user_id')
     foldername = 'face_data'
-    path = os.path.join(os.path.abspath('../static'), foldername)
+    path = os.path.join(os.path.abspath('../static2'), foldername)
     if not os.path.exists(path):
         os.mkdir(path)
-        path = os.path.join(os.path.abspath(f'../static/{foldername}'), str(user_id))
+        path = os.path.join(os.path.abspath(f'../static2/{foldername}'), str(user_id))
         os.mkdir(path)
 
-    elif not os.path.exists(os.path.join(os.path.abspath(f'../static/{foldername}'), str(user_id))):
-        path = os.path.join(os.path.abspath(f'../static/{foldername}'), str(user_id))
+    elif not os.path.exists(os.path.join(os.path.abspath(f'../static2/{foldername}'), str(user_id))):
+        path = os.path.join(os.path.abspath(f'../static2/{foldername}'), str(user_id))
         os.mkdir(path)
     else:
-        path = os.path.join(os.path.abspath(f'../static/{foldername}'), str(user_id))
+        path = os.path.join(os.path.abspath(f'../static2/{foldername}'), str(user_id))
     contents = request.json
-    scale = 0.5
+    scale = 0.25
     count = 0
     reg_frame = 0
     total = len(contents)
     curr_faces = len(glob.glob(path + '/*'))
+    new_paths = []
     for content in contents:
         image = content['image']
         frame = base64ToImageWeb(image)
         frame = normalize(frame)
-        frame = cv2.cvtColor(frame,cv2.COLOR_BGR2GRAY)
-        img = frame.copy()
-        # base_img = frame.copy()
-        # img = cv2.resize(img, (int(img.shape[1] * scale), int(img.shape[0] * scale)),
-        #                  interpolation=cv2.INTER_AREA)
+        cpy = frame.copy()
+        img = cv2.resize(cpy, (int(cpy.shape[1] * scale), int(cpy.shape[0] * scale)), interpolation=cv2.INTER_AREA)
         bounding_boxes, _ = align.detect_face.detect_face(img, MINSIZE, pnet, rnet, onet, THRESHOLD, FACTOR)
-
         faces_found = bounding_boxes.shape[0]
+        # try:
 
-        if faces_found > 1:
-            cv2.putText(frame, "Only one face", (0, 100), cv2.FONT_HERSHEY_COMPLEX_SMALL,
-                        1, (255, 255, 255), thickness=1, lineType=2)
-        elif faces_found > 0:
+        if faces_found > 0:
             det = bounding_boxes[:, 0:4]
             bb = np.zeros((faces_found, 4), dtype=np.int32)
             for i in range(faces_found):
-                bb[i][0] = det[i][0]
-                bb[i][1] = det[i][1]
-                bb[i][2] = det[i][2]
-                bb[i][3] = det[i][3]
+                bb[i][0] = det[i][0] / scale
+                bb[i][1] = det[i][1] / scale
+                bb[i][2] = det[i][2] / scale
+                bb[i][3] = det[i][3] / scale
                 # print(bb[i][3] - bb[i][1])
                 # print(frame.shape[0])
                 # print((bb[i][3] - bb[i][1]) / frame.shape[0])
-                if (bb[i][3] - bb[i][1]) / frame.shape[0] > 0.25:
+                if (bb[i][3] - bb[i][1]) / frame.shape[0] > 0:
                     cropped = frame[bb[i][1]:bb[i][3], bb[i][0]:bb[i][2], :]
                     # cv2.rectangle(frame, (bb[i][0], bb[i][1]), (bb[i][2], bb[i][3]), (0, 255, 0), 2)
                     custom_face = cv2.resize(cropped, (INPUT_IMAGE_SIZE, INPUT_IMAGE_SIZE),
                                              interpolation=cv2.INTER_CUBIC)
-                    print(custom_face)
-                    cv2.imwrite(path + f'/%d.png' % (curr_faces), custom_face)
+                    # print(custom_face)
+                    save_path = path + f'/{curr_faces + 1}.png'
+                    cv2.imwrite(save_path, custom_face)
+                    new_paths.append(save_path)
                     print("frame %d saved" % curr_faces)
                     curr_faces = curr_faces + 1
                     reg_frame = reg_frame + 1
 
-    embedding_faces(user_id)
-    sc = jsonify({'message':'Done'})
+    embedding_faces(user_id, new_paths)
+    sc = jsonify({'message': 'Done'})
     sc.status_code = 200
     # except:
     #     sc = jsonify({'company_id': company_id_reg_web, 'user_id': user_id_reg_web,
@@ -270,5 +271,7 @@ def add_faces():
 
 
 if __name__ == '__main__':
-    embedding_faces()
-    app.run(debug=False, host='0.0.0.0', port=5002)
+    # embedding_faces()
+    load_faces_data()
+    print('[INFO] Starting server at http://localhost:5000')
+    socketio.run(app=app, debug=False, host='0.0.0.0', port=5000)

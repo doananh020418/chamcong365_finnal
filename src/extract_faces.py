@@ -61,22 +61,7 @@ def get_faces(raw_path, id):
                         count += 1
         except:
             pass
-def gen_faces(path):
-    files = glob.glob(path + '/*.png')
-    count = 0
-    for f in files:
-        custom_face = cv2.imread(f)
-        process_frame1 = adjust_gamma(custom_face, 0.9)
-        cv2.imwrite(path + '/%d_adjusted1.png' % (count), process_frame1)
-        process_frame2 = rotate_img(custom_face, angle=5)
-        cv2.imwrite(path + '/%d_adjusted2.png' % (count), process_frame2)
-        process_frame3 = adjust_gamma(custom_face, 1.2)
-        cv2.imwrite(path + '/%d_adjusted3.png' % (count), process_frame3)
-        process_frame4 = distort(custom_face)
-        cv2.imwrite(path + '/%d_adjusted4.png' % (count), process_frame4)
-        process_frame5 = cv2.flip(custom_face, 1)
-        cv2.imwrite(path + '/%d_adjusted5.png' % (count), process_frame5)
-        count = count + 1
+
 
 dirs = os.listdir(r'C:\Users\doank\PycharmProjects\chamcong365_finnal\raw\img\img')
 for dir in dirs:
