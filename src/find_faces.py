@@ -130,148 +130,94 @@ def retrain():
     return sc
 
 
-@app.route('/find_user', methods=['GET', 'POST'])
-def find_user():
-    global df
+def recognition_vjpro(frame, scale=0.2, top5=False):
+    cpy = frame.copy()
+    img = cv2.resize(cpy, (int(cpy.shape[1] * scale), int(cpy.shape[0] * scale)), interpolation=cv2.INTER_AREA)
+    bounding_boxes, _ = align.detect_face.detect_face(img, MINSIZE, pnet, rnet, onet, THRESHOLD, FACTOR)
+    faces_found = bounding_boxes.shape[0]
+    # try:
     label = "Undetected"
-    scale = 0.25
-    top5 = True
-    image = ''
-    if True:
-        contents = request.json
-        # print(len(contents))
-        for content in contents:
-            image = content['image']
-        frame = base64ToImageWeb(image)
-        frame = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-        frame = np.stack((frame,) * 3, axis=-1)
-        cpy = frame.copy()
-        img = cv2.resize(cpy, (int(cpy.shape[1] * scale), int(cpy.shape[0] * scale)), interpolation=cv2.INTER_AREA)
-        bounding_boxes, _ = align.detect_face.detect_face(img, MINSIZE, pnet, rnet, onet, THRESHOLD, FACTOR)
-        faces_found = bounding_boxes.shape[0]
-        # try:
-        if faces_found > 0:
-            det = bounding_boxes[:, 0:4]
-            bb = np.zeros((faces_found, 4), dtype=np.int32)
-            for i in range(faces_found):
-                bb[i][0] = det[i][0] / scale
-                bb[i][1] = det[i][1] / scale
-                bb[i][2] = det[i][2] / scale
-                bb[i][3] = det[i][3] / scale
+    if faces_found > 0:
+        det = bounding_boxes[:, 0:4]
+        bb = np.zeros((faces_found, 4), dtype=np.int32)
+        for i in range(faces_found):
+            bb[i][0] = det[i][0] / scale
+            bb[i][1] = det[i][1] / scale
+            bb[i][2] = det[i][2] / scale
+            bb[i][3] = det[i][3] / scale
 
-                if (bb[i][3] - bb[i][1]) / frame.shape[0] > 0:
-                    # if detect_spoofing(cpy):
-                    if True:
-                        cropped = frame[bb[i][1]:bb[i][3], bb[i][0]:bb[i][2], :]
-                        scaled = cv2.resize(cropped, (INPUT_IMAGE_SIZE, INPUT_IMAGE_SIZE),
-                                            interpolation=cv2.INTER_CUBIC)
-                        # cv2.imwrite('verify_web.png', scaled)
-                        scaled = normalize(scaled)
-                        scaled = facenet.prewhiten(scaled)
-                        scaled_reshape = scaled.reshape(-1, INPUT_IMAGE_SIZE, INPUT_IMAGE_SIZE, 3)
-                        feed_dict = {images_placeholder: scaled_reshape, phase_train_placeholder: False}
-                        emb_array = sess.run(embeddings, feed_dict=feed_dict)
-
-                        def findDistance(row):
-                            distance_metric = 'euclidean_l2'
-                            img2_representation = row['emb_array']
-                            distance = 1000  # initialize very large value
-                            if distance_metric == 'cosine':
-                                distance = dst.findCosineDistance(emb_array, img2_representation)
-                            elif distance_metric == 'euclidean':
-                                distance = dst.findEuclideanDistance(emb_array, img2_representation)
-                            elif distance_metric == 'euclidean_l2':
-                                distance = dst.findEuclideanDistance(dst.l2_normalize(emb_array),
-                                                                     dst.l2_normalize(img2_representation))
-
-                            return distance
-
-                        tmp_df = df.copy()
-                        tmp_df['distance'] = tmp_df.apply(findDistance, axis=1)
-                        tmp_df = tmp_df.sort_values(by=["distance"])
-                        if top5 and len(tmp_df) > 5:
-                            candidate = tmp_df.iloc[:5]
-                            best_distance = candidate['distance']
-                            label = candidate['name']
-                        else:
-                            candidate = tmp_df.iloc[0]
-                            best_distance = candidate['distance']
-                            label = candidate['name']
-                        del tmp_df
-                        print(f'Best distance {best_distance}, name {label}')
-    sc = jsonify({'user_id': label})
-    sc.status_code = 200
-    return sc
-
-
-@app.route('/add_faces', methods=['GET', 'POST'])
-def add_faces():
-    user_id = request.args.get('user_id')
-    foldername = 'face_data'
-    path = os.path.join(os.path.abspath('../static2'), foldername)
-    if not os.path.exists(path):
-        os.mkdir(path)
-        path = os.path.join(os.path.abspath(f'../static2/{foldername}'), str(user_id))
-        os.mkdir(path)
-
-    elif not os.path.exists(os.path.join(os.path.abspath(f'../static2/{foldername}'), str(user_id))):
-        path = os.path.join(os.path.abspath(f'../static2/{foldername}'), str(user_id))
-        os.mkdir(path)
-    else:
-        path = os.path.join(os.path.abspath(f'../static2/{foldername}'), str(user_id))
-    contents = request.json
-    scale = 0.25
-    count = 0
-    reg_frame = 0
-    total = len(contents)
-    curr_faces = len(glob.glob(path + '/*'))
-    new_paths = []
-    for content in contents:
-        image = content['image']
-        frame = base64ToImageWeb(image)
-        frame = normalize(frame)
-        cpy = frame.copy()
-        img = cv2.resize(cpy, (int(cpy.shape[1] * scale), int(cpy.shape[0] * scale)), interpolation=cv2.INTER_AREA)
-        bounding_boxes, _ = align.detect_face.detect_face(img, MINSIZE, pnet, rnet, onet, THRESHOLD, FACTOR)
-        faces_found = bounding_boxes.shape[0]
-        # try:
-
-        if faces_found > 0:
-            det = bounding_boxes[:, 0:4]
-            bb = np.zeros((faces_found, 4), dtype=np.int32)
-            for i in range(faces_found):
-                bb[i][0] = det[i][0] / scale
-                bb[i][1] = det[i][1] / scale
-                bb[i][2] = det[i][2] / scale
-                bb[i][3] = det[i][3] / scale
-                # print(bb[i][3] - bb[i][1])
-                # print(frame.shape[0])
-                # print((bb[i][3] - bb[i][1]) / frame.shape[0])
-                if (bb[i][3] - bb[i][1]) / frame.shape[0] > 0:
+            if (bb[i][3] - bb[i][1]) / frame.shape[0] > 0:
+                # if detect_spoofing(cpy):
+                if True:
                     cropped = frame[bb[i][1]:bb[i][3], bb[i][0]:bb[i][2], :]
-                    # cv2.rectangle(frame, (bb[i][0], bb[i][1]), (bb[i][2], bb[i][3]), (0, 255, 0), 2)
-                    custom_face = cv2.resize(cropped, (INPUT_IMAGE_SIZE, INPUT_IMAGE_SIZE),
-                                             interpolation=cv2.INTER_CUBIC)
-                    # print(custom_face)
-                    save_path = path + f'/{curr_faces + 1}.png'
-                    cv2.imwrite(save_path, custom_face)
-                    new_paths.append(save_path)
-                    print("frame %d saved" % curr_faces)
-                    curr_faces = curr_faces + 1
-                    reg_frame = reg_frame + 1
+                    scaled = cv2.resize(cropped, (INPUT_IMAGE_SIZE, INPUT_IMAGE_SIZE),
+                                        interpolation=cv2.INTER_CUBIC)
+                    # cv2.imwrite('verify_web.png', scaled)
+                    scaled = normalize(scaled)
+                    scaled = facenet.prewhiten(scaled)
+                    scaled_reshape = scaled.reshape(-1, INPUT_IMAGE_SIZE, INPUT_IMAGE_SIZE, 3)
+                    feed_dict = {images_placeholder: scaled_reshape, phase_train_placeholder: False}
+                    emb_array = sess.run(embeddings, feed_dict=feed_dict)
 
-    embedding_faces(user_id, new_paths)
-    sc = jsonify({'message': 'Done'})
-    sc.status_code = 200
-    # except:
-    #     sc = jsonify({'company_id': company_id_reg_web, 'user_id': user_id_reg_web,
-    #                   'message': f"Up load register image unsuccessfull! {count}/{total} images uploaded!"})
-    #     sc.status_code = 404
-    return sc
+                    def findDistance(row):
+                        distance_metric = 'euclidean_l2'
+                        img2_representation = row['emb_array']
+                        distance = 1000  # initialize very large value
+                        if distance_metric == 'cosine':
+                            distance = dst.findCosineDistance(emb_array, img2_representation)
+                        elif distance_metric == 'euclidean':
+                            distance = dst.findEuclideanDistance(emb_array, img2_representation)
+                        elif distance_metric == 'euclidean_l2':
+                            distance = dst.findEuclideanDistance(dst.l2_normalize(emb_array),
+                                                                 dst.l2_normalize(img2_representation))
+
+                        return distance
+
+                    tmp_df = df.copy()
+                    tmp_df['distance'] = tmp_df.apply(findDistance, axis=1)
+                    tmp_df = tmp_df.sort_values(by=["distance"])
+                    if top5 and len(tmp_df) > 5:
+                        candidate = tmp_df.iloc[:5]
+                        best_distance = candidate['distance'].to_list()
+                        label = candidate['name'].to_list()
+                    else:
+                        candidate = tmp_df.iloc[0]
+                        best_distance = candidate['distance']
+                        label = candidate['name']
+                    del tmp_df
+                    print(f'Best distance {best_distance}, name {label}')
+    return label
 
 
-if __name__ == '__main__':
-    # embedding_faces()
-    load_faces_data()
-    print('[INFO] Starting server at http://localhost:5000')
-    socketio.run(app=app, debug=False, host='0.0.0.0', port=5000)
+def save_faces(frame, scale=0.2, path=None):
+    save_path = '.'
+    curr_faces = len(glob.glob(path + '/*'))
+    cpy = frame.copy()
+    img = cv2.resize(cpy, (int(cpy.shape[1] * scale), int(cpy.shape[0] * scale)), interpolation=cv2.INTER_AREA)
+    bounding_boxes, _ = align.detect_face.detect_face(img, MINSIZE, pnet, rnet, onet, THRESHOLD, FACTOR)
+    faces_found = bounding_boxes.shape[0]
+    # try:
+
+    if faces_found > 0:
+        det = bounding_boxes[:, 0:4]
+        bb = np.zeros((faces_found, 4), dtype=np.int32)
+        for i in range(faces_found):
+            bb[i][0] = det[i][0] / scale
+            bb[i][1] = det[i][1] / scale
+            bb[i][2] = det[i][2] / scale
+            bb[i][3] = det[i][3] / scale
+            # print(bb[i][3] - bb[i][1])
+            # print(frame.shape[0])
+            # print((bb[i][3] - bb[i][1]) / frame.shape[0])
+            if (bb[i][3] - bb[i][1]) / frame.shape[0] > 0:
+                cropped = frame[bb[i][1]:bb[i][3], bb[i][0]:bb[i][2], :]
+                custom_face = cv2.resize(cropped, (INPUT_IMAGE_SIZE, INPUT_IMAGE_SIZE),
+                                         interpolation=cv2.INTER_CUBIC)
+                save_path = path + f'/{curr_faces + 1}.png'
+                cv2.imwrite(save_path, custom_face)
+                print("frame %d saved" % curr_faces)
+                curr_faces = curr_faces + 1
+    return save_path
+
+
+
